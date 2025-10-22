@@ -1,0 +1,13 @@
+cred
+.env
+.git.nosync.noindex
+.git
+.venv.nosync.noindex
+.venv
+__pycache__/
+.DS_Store
+*.pyc
+.github.nosync.noindex
+.github/
+.vscode
+scratch

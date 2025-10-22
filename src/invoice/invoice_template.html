@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Invoice</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --accent: #0a84ff;
+      --text: #1f2933;
+      --muted: #6b7280;
+      --bg: #f7f9fc;
+      --border: #e2e8f0;
+      font-family: "Inter", "Helvetica Neue", Arial, sans-serif;
+    }
+    body {
+      margin: 0;
+      padding: 0;
+      background: var(--bg);
+      color: var(--text);
+    }
+    .invoice-wrapper {
+      max-width: 800px;
+      margin: 40px auto;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: 0 20px 40px rgba(15, 23, 42, 0.08);
+    }
+    header {
+      padding: 32px 40px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: linear-gradient(120deg, rgba(10, 132, 255, 0.09), rgba(10, 132, 255, 0));
+    }
+    .brand {
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--accent);
+    }
+    .invoice-meta {
+      text-align: right;
+      font-size: 14px;
+      color: var(--muted);
+    }
+    .invoice-meta strong {
+      display: block;
+      font-size: 24px;
+      color: var(--text);
+      letter-spacing: 0.04em;
+    }
+    section {
+      padding: 32px 40px;
+    }
+    .grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 24px;
+    }
+    .grid > div {
+      flex: 1 1 240px;
+    }
+    h1, h2, h3, h4 {
+      margin: 0 0 12px;
+      font-weight: 600;
+      letter-spacing: -0.015em;
+    }
+    p {
+      margin: 4px 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 24px;
+      font-size: 14px;
+    }
+    th, td {
+      padding: 16px 12px;
+      border-bottom: 1px solid var(--border);
+      text-align: left;
+    }
+    th {
+      text-transform: uppercase;
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      font-weight: 600;
+      color: var(--muted);
+    }
+    td:last-child, th:last-child {
+      text-align: right;
+    }
+    .totals {
+      margin-top: 24px;
+      width: 320px;
+      margin-left: auto;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    .totals-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 14px 18px;
+      font-size: 15px;
+    }
+    .totals-row:nth-child(odd) {
+      background: rgba(10, 132, 255, 0.04);
+    }
+    .totals-row.total {
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--accent);
+    }
+    .notes {
+      margin-top: 40px;
+      font-size: 13px;
+      color: var(--muted);
+      line-height: 1.6;
+      border-top: 1px solid var(--border);
+      padding-top: 20px;
+    }
+    footer {
+      padding: 24px 40px 32px;
+      text-align: center;
+      font-size: 12px;
+      color: var(--muted);
+      border-top: 1px solid var(--border);
+      background: #fcfdff;
+    }
+    @media print {
+      body {
+        background: #fff;
+      }
+      .invoice-wrapper {
+        margin: 0;
+        box-shadow: none;
+        border: none;
+        border-radius: 0;
+      }
+      header {
+        border-bottom: 1px solid var(--border);
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="invoice-wrapper">
+    <header>
+      <div class="brand">[Your Company Name]</div>
+      <div class="invoice-meta">
+        <strong>Invoice #[INVOICE_NUMBER]</strong>
+        Issued: [ISSUE_DATE]<br>
+        Due: [DUE_DATE]
+      </div>
+    </header>
+
+    <section>
+      <div class="grid">
+        <div>
+          <h3>Bill To</h3>
+          <p>[Customer Company]</p>
+          <p>[Contact Name]</p>
+          <p>[Address Line 1]</p>
+          <p>[Address Line 2]</p>
+          <p>[Email]</p>
+        </div>
+        <div>
+          <h3>From</h3>
+          <p>[Your Company Name]</p>
+          <p>[Street Address]</p>
+          <p>[City, State ZIP]</p>
+          <p>[Contact Email]</p>
+          <p>[Phone]</p>
+        </div>
+        <div>
+          <h3>Payment</h3>
+          <p>Terms: [Payment Terms]</p>
+          <p>Method: [Preferred Method]</p>
+          <p>Reference: [PO Number]</p>
+        </div>
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Description</th>
+            <th>Qty</th>
+            <th>Unit</th>
+            <th>Unit Price</th>
+            <th>Line Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          <!-- Repeat for each line item -->
+          <tr>
+            <td>[Product / Service Description]</td>
+            <td>[Quantity]</td>
+            <td>[Unit]</td>
+            <td>[Unit Price]</td>
+            <td>[Line Total]</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="totals">
+        <div class="totals-row">
+          <span>Subtotal</span>
+          <span>[Subtotal]</span>
+        </div>
+        <div class="totals-row">
+          <span>Tax ([Tax Rate]%)</span>
+          <span>[Tax Amount]</span>
+        </div>
+        <div class="totals-row">
+          <span>Shipping</span>
+          <span>[Shipping]</span>
+        </div>
+        <div class="totals-row total">
+          <span>Total Due</span>
+          <span>[Total Due]</span>
+        </div>
+      </div>
+
+      <div class="notes">
+        <strong>Notes</strong><br>
+        [Thank you for your business! Please remit payment within 30 days. Include the invoice number on your remittance.]
+      </div>
+    </section>
+
+    <footer>
+      [Your Company Name] · [Website URL] · [Support Email] · [Phone Number]
+    </footer>
+  </div>
+</body>
+</html>

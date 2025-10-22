@@ -8,9 +8,7 @@ from azure.ai.agents.models import (
     ToolSet,  # group multiple tools
     ResponseFormatJsonSchema,  # define response format schema
     ResponseFormatJsonSchemaType,  # specify response format type
-    AgentsNamedToolChoice,  # specify tool usage
-    AgentsNamedToolChoiceType,  # specify tool choice type
-    FunctionName,  # specify function names that will be used
+    ConnectedAgentTool,  # define connected agent tools. This is a tool that can call other agents, in order to chain agents together.
 )
 from src.email.gmail_grabber import authenticate_gmail, fetch_unread_emails  # Import Gmail functions
 from src.shared.po_schema import PurchaseOrder  # Import the Pydantic schema for purchase order extraction
@@ -42,14 +40,16 @@ with agent_client:
     toolset.add(functions)
     agent_client.enable_auto_function_calls(toolset)
     
+    # Define the response format using the PurchaseOrder schema
     response_format = ResponseFormatJsonSchemaType(
         json_schema=ResponseFormatJsonSchema(
-            name="POExtraction",
+            name="PurchaseOrderExtraction",
             description="Structured purchase-order data from unread Gmail messages.",
             schema=PurchaseOrder.model_json_schema(ref_template="#/components/schemas/{model}"),
         )
     )
-
+    
+    # Create the agent, enabling connected tools
     agent = agent_client.create_agent(
         model=model_deployment,
         name="gmail-purchase-order-agent",
@@ -64,17 +64,45 @@ with agent_client:
         response_format=response_format,
     )
 
+    # Create a new thread for the agent interaction
     thread = agent_client.threads.create()
-    
-    # Run agent and get response
+
+    # Initial user message to start the agent process
+    agent_client.messages.create(
+        thread_id=thread.id,
+        role="user",
+        content="Fetch unread Gmail messages, detect purchase orders, and respond with structured PO data.",
+    )
+
+    # Run agent and get response.
     run = agent_client.runs.create_and_process(
         thread_id=thread.id,
         agent_id=agent.id,
-        tool_choice=AgentsNamedToolChoice(
-            type=AgentsNamedToolChoiceType.FUNCTION,
-            function=FunctionName(name="gmail_grabber"),
-        ),
+        toolset=toolset,
     )
 
-    message = agent_client.messages.list(thread_id=thread.id)#[-1]
-    print("----------- Agent Response:-----------\n\n", message.content)
+    messages = agent_client.messages.list(thread_id=thread.id)
+    print("----------- Agent Response:-----------\n\n")
+
+    for message in messages:
+            print(message.content)
+
+    # thread_messages = list(agent_client.messages.list(thread_id=thread.id))
+    # if not thread_messages:
+    #     print("No messages were recorded on this thread.")
+    # else:
+    #     print("----------- Agent Messages -----------")
+    #     for message in thread_messages:
+    #         role = message.get("role", "unknown").upper()
+    #         print(f"{role}:")
+    #         content = message.get("content", [])
+    #         if isinstance(content, str):
+    #             print(content)
+    #         else:
+    #             for block in content:
+    #                 block_type = block.get("type")
+    #                 if block_type == "text":
+    #                     print(block.get("text", ""))
+    #                 else:
+    #                     print(f"[{block_type}] {block}")
+    #         print()

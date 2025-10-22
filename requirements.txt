@@ -1,0 +1,11 @@
+requests
+python-dotenv
+beautifulsoup4
+pydantic
+google-auth-oauthlib
+google-auth-httplib2
+google-api-python-client
+slack-sdk
+azure-identity
+azure-ai-agents
+azure-ai-projects
