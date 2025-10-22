@@ -5,12 +5,12 @@ AI-powered Order-to-Cash system that converts purchase order emails into invoice
 ## What This Does
 
 1. Monitors Gmail inbox for purchase order emails
-2. Uses a multi-agent workflow (orchestrated by Azure AI Foundry Agent Service) to process orders:
-   - **Email Intake Agent**: Extracts structured data from messy PO emails
-   - **SKU Resolver Agent**: Performs semantic matching to find the right products
-   - **Comms and Exceptions Agent**: Drafts human-quality responses and notifications
-3. Generates invoices and replies to buyers automatically
-4. Sends notifications to Slack
+2. Uses an Azure AI Foundry multi-agent workflow orchestrated by a single brain:
+   - **Email Triage Agent** – filters true purchase orders.
+   - **PO Parser Agent** – extracts a clean `PurchaseOrder` JSON.
+   - **SKU Resolver Agent** – reviews candidate SKUs provided by deterministic search and finalizes matches.
+3. Deterministic Python helpers take care of credit checks, totals, CRM writes, invoice PDF generation, and notifications.
+4. Generates invoices, replies to buyers, and notifies Slack automatically.
 
 ### Multi-Agent Workflow
 
@@ -28,11 +28,16 @@ The system uses three specialized AI agents orchestrated through Azure AI Foundr
 
 **Why an agent**: Static keyword rules and synonym lists miss near duplicates and novel wording, while an LLM-guided search can understand intent, compare close candidates, and justify the pick.
 
-#### 3. Comms and Exceptions Agent (Human-Quality Messaging)
+#### Deterministic Orchestrator Services
 
-**What it does**: Drafts the buyer reply that includes totals, promise date, and invoice attachment, and creates a Slack Block Kit message for the operator in the orders channel.
+After SKU resolution, the orchestrator calls local Python helpers to:
+- prepare SKU candidate lists via `src/ai_search_indexer.py`
+- run credit checks and totals
+- generate the invoice PDF
+- send the Gmail reply and Slack alert
+- post the order to Airtable CRM
 
-**Why an agent**: Ensures consistent, professional communication that adapts to the context of each order, handles edge cases gracefully, and maintains brand voice.
+> The legacy communications agent is currently on standby; the orchestrator now handles messaging through deterministic helpers.
 
 ## Quick Start
 
@@ -251,6 +256,117 @@ Gmail → FastAPI → AI Agents → Services → Invoice PDF
                 |  (reasoning, embeddings) |    |    (SKU vector index)  |
                 +--------------------------+    +------------------------+
 ```
+
+**High-Level Multi-Agent Orchestration:**
+
+```txt
+┌─────────────────────────────────────────────────────────────┐
+│                   ORCHESTRATOR AGENT                        │
+│  Calls tools, tracks state, and writes the final summary.   │
+└─────────────────────────────────────────────────────────────┘
+                            │
+        ┌───────────────────┼───────────────────┐
+        ↓                   ↓                   ↓
+┌───────────────┐  ┌─────────────────┐  ┌────────────────────────────┐
+│ EMAIL TRIAGE  │  │  PO PARSER      │  │ Deterministic candidate   │
+│    AGENT      │  │     AGENT       │  │ builder (`prepare_sku…`)  │
+└───────────────┘  └─────────────────┘  └────────────────────────────┘
+                                                  │
+                                                  ↓
+                                         ┌──────────────────┐
+                                         │  SKU RESOLVER    │
+                                         │     AGENT        │
+                                         └──────────────────┘
+                                                  │
+                                                  ↓
+┌──────────────────────────────────────────────────────────┐
+│ Deterministic services: credit checks, totals, PDF, CRM   │
+│ write, Gmail reply, Slack notification                    │
+└──────────────────────────────────────────────────────────┘
+```
+
+**Multi-Agent Orchestration with Tools:**
+
+```txt
+╔═══════════════════════════════════════════════════════════════════════════╗
+║                O2C ORCHESTRATION WITH CONNECTED AGENTS                    ║
+╚═══════════════════════════════════════════════════════════════════════════╝
+
+1. Orchestrator calls `gmail_grabber()` to list unread threads.
+2. For each email:
+   a. `classify_email_as_po` → skip if not a PO.
+   b. `parse_purchase_order` → structured PO JSON.
+   c. `prepare_sku_candidates` → vector + CRM shortlist.
+   d. `resolve_product_skus` → enriched order lines with reasoning.
+   e. Deterministic helpers: `check_credit`, `calculate_totals`,
+      `compose_confirmation_email`, `generate_invoice_pdf`,
+      `send_email_reply`, `send_slack_notification`, `add_order_to_crm`.
+3. Orchestrator aggregates the run log and returns a final summary.
+```
+
+**Agent Data Flow:**
+
+```txt
+╔═══════════════════════════════════════════════════════════════════════════╗
+║                            DATA FLOW                                      ║
+╚═══════════════════════════════════════════════════════════════════════════╝
+
+  Gmail Inbox  →  [Email JSON]  →  Triage  →  [TriageResult]
+                                      ↓
+                                   if is_po = true
+                                      ↓
+                                  PO Parser  →  [PurchaseOrder]
+                                      ↓
+                      prepare_sku_candidates  →  [Candidate Bundles]
+                                      ↓
+                                  SKU Resolver  →  [EnrichedPurchaseOrder]
+                                      ↓
+                 Deterministic helpers (credit/totals/PDF/CRM/email/Slack)
+```
+
+**Agent Schemas:**
+
+```txt
+╔═══════════════════════════════════════════════════════════════════════════╗
+║                        PYDANTIC SCHEMAS                                   ║
+╚═══════════════════════════════════════════════════════════════════════════╝
+
+  TriageResult             PurchaseOrder              OrderLine
+  ├─ is_po                 ├─ po_number               ├─ line_reference
+  ├─ confidence            ├─ order_date              ├─ product_description
+  └─ reason                ├─ customer (name/contact) ├─ quantity / unit
+                           ├─ order_lines[]           ├─ unit_price / line_total
+                           ├─ net_amount              └─ product_code
+                           └─ gmail_message_id
+
+  SkuCandidate             LineCandidateBundle        SkuResolutionPayload
+  ├─ sku                   ├─ line_index              ├─ purchase_order
+  ├─ title/description     ├─ original_line           └─ line_candidates[]
+  ├─ similarity_score      └─ candidates[]
+  ├─ unit/unit_price
+  └─ qty_available
+
+  EnrichedPurchaseOrder    OrderLineEnriched          MatchingSummary
+  ├─ po_number             ├─ product_code            ├─ total_lines
+  ├─ customer              ├─ unit_price/line_total   ├─ matched_lines
+  ├─ order_lines[]         ├─ match_confidence        ├─ avg_confidence
+  └─ matching_summary      ├─ match_reason            └─ needs_review flag
+                           └─ needs_review
+```
+
+**External Integrations:**
+
+```txt
+╔═══════════════════════════════════════════════════════════════════════════╗
+║                      EXTERNAL INTEGRATIONS                                ║
+╚═══════════════════════════════════════════════════════════════════════════╝
+
+  📧 Gmail API          →  Fetch/Send emails
+  🔍 Azure AI Search    →  Vector similarity search for SKU matching
+  📊 Airtable CRM       →  Product catalog, pricing, customer data
+  💬 Slack Webhooks     →  Exception notifications
+```
+
 
 ## Cost Estimate
 
