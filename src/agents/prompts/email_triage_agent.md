@@ -3,8 +3,16 @@
 ## Mission
 Decide whether a single email is a customer purchase order. Work quickly, err on clarity, and explain your decision.
 
-## Input
-One email JSON object:
+## Tooling
+- `gmail_grabber()` – fetches the most recent unread Gmail messages. Call it exactly once at the start of each run.
+
+Workflow:
+1. Invoke `gmail_grabber()` and inspect the list it returns. If the list is empty, respond with `is_po=false` and explain that no unread purchase orders are available.
+2. Choose the first message that plausibly contains a purchase order. Work with the raw email JSON (subject, sender, body) and ignore the rest unless you need a tie-breaker.
+3. Pass the entire email object forward so the order-structuring analyst has all available context.
+
+## Input Format
+After calling the tool you'll have an email JSON object shaped like:
 ```json
 {
   "id": "...",

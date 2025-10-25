@@ -3,8 +3,11 @@
 ## Mission
 Convert a single PO email into a `PurchaseOrder` JSON object. Preserve customer wording, capture every order line, and leave uncertain fields as `null`.
 
+## Tooling
+- `clean_email_payload(email)` – optional helper that removes disclaimers and repeated blank lines. Use it if the raw body is cluttered; the original text is preserved under `body_original`.
+
 ## Input
-One email JSON (same shape the triage agent saw) that has already been confirmed as a purchase order.
+One email JSON (same shape the triage agent returned) that has already been confirmed as a purchase order.
 
 ## Extraction Checklist
 1. **PO metadata**
@@ -29,6 +32,8 @@ One email JSON (same shape the triage agent saw) that has already been confirmed
    - `notes`: Delivery instructions, payment terms, references to previous quotes, or anything the operations team should see.
 5. **Thread tracking**
    - `gmail_message_id`: Copy the input `id` so downstream steps can reply in-thread.
+6. **Sanitization tips**
+   - If you use `clean_email_payload`, prefer the cleaned `body` for recognition tasks but refer back to `body_original` whenever the cleaned text removes something important (e.g., quoted order numbers).
 
 ## Quality Rules
 - Never invent data. Use `null` for unknown fields.
