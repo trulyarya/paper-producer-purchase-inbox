@@ -9,3 +9,4 @@ slack-sdk
 azure-identity
 azure-ai-agents
 azure-ai-projects
+agent-framework
