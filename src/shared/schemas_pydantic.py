@@ -6,12 +6,12 @@ Organized by workflow stage: Triage → Parser → SKU Resolution → Comms.
 """
 
 from pydantic import BaseModel, Field, field_validator
-from typing import Optional, List
+from typing import Optional, Any
 from datetime import date
 
 
 # ============================================================================
-# 1. EMAIL TRIAGE AGENT SCHEMAS
+# 1. EMAIL INBOX TRIAGE AGENT SCHEMAS
 # Used by the triage agent to classify incoming emails as PO or non-PO.
 # ============================================================================
 
@@ -21,10 +21,13 @@ class TriageResult(BaseModel):
     is_po: bool = Field(..., description="True if email is a purchase order")
     confidence: float = Field(..., ge=0.0, le=1.0, description="Confidence score 0-1")
     reason: str = Field(..., description="Brief classification explanation")
+    subject: Optional[str] = Field(None, description="Email subject line")
+    sender: Optional[str] = Field(None, description="Email sender address")
+    body: Optional[str] = Field(None, description="Email body text")
 
 
 # ============================================================================
-# 2. PO PARSER AGENT SCHEMAS
+# 2. ORDER STRUCTURING/PO PARSER AGENT SCHEMAS
 # Used by the parser agent to extract structured data from PO emails.
 # ============================================================================
 
@@ -46,7 +49,6 @@ class OrderLine(BaseModel):
     unit_price: Optional[float] = Field(None, ge=0, description="Price per unit")
     line_total: Optional[float] = Field(None, ge=0, description="Line total")
 
-
 class PurchaseOrder(BaseModel):
     """Complete purchase order extracted from email.
     Main schema containing customer info, order lines, dates, and metadata."""
@@ -54,15 +56,15 @@ class PurchaseOrder(BaseModel):
     order_date: Optional[date] = Field(None, description="Order date")
     requested_ship_date: Optional[date] = Field(None, description="Requested ship date")
     customer: CustomerInfo = Field(..., description="Customer information")
-    order_lines: List[OrderLine] = Field(..., min_length=1, description="Order lines (min 1)")
+    order_lines: list[OrderLine] = Field(..., min_length=1, description="Order lines (min 1)")
     net_amount: Optional[float] = Field(None, ge=0, description="Total order amount")
     gmail_message_id: Optional[str] = Field(None, description="Gmail message ID")
     notes: Optional[str] = Field(None, description="Special instructions or notes")
 
 
 # ============================================================================
-# 3. SKU RESOLUTION SCHEMAS
-# Used to pass vector-search candidates to the SKU agent and capture its output.
+# 3. CATALOG MATCHING/SKU RESOLUTION SCHEMAS
+# Used to pass vector-search candidates to SKU agent & capture its output.
 # ============================================================================
 
 class SkuCandidate(BaseModel):
@@ -75,19 +77,16 @@ class SkuCandidate(BaseModel):
     unit_price: Optional[float] = Field(None, ge=0, description="Unit price from catalog")
     qty_available: Optional[int] = Field(None, ge=0, description="Available inventory quantity")
 
-
 class LineCandidateBundle(BaseModel):
     """Deterministic candidate list for a single order line."""
     line_index: int = Field(..., ge=0, description="Zero-based index of the line in the original order")
     original_line: OrderLine = Field(..., description="Original line information")
-    candidates: List[SkuCandidate] = Field(..., min_length=1, description="Candidate SKUs sorted by relevance")
-
+    candidates: list[SkuCandidate] = Field(..., min_length=1, description="Candidate SKUs sorted by relevance")
 
 class SkuResolutionPayload(BaseModel):
     """Payload passed from orchestrator to the SKU resolver agent."""
     purchase_order: PurchaseOrder = Field(..., description="The parsed purchase order")
-    line_candidates: List[LineCandidateBundle] = Field(..., min_length=1, description="Candidate bundles per line")
-
+    line_candidates: list[LineCandidateBundle] = Field(..., min_length=1, description="Candidate bundles per line")
 
 class OrderLineEnriched(BaseModel):
     """Order line with matched SKU and pricing from catalog.
@@ -102,7 +101,6 @@ class OrderLineEnriched(BaseModel):
     match_reason: str = Field(..., description="Why this SKU was selected")
     needs_review: bool = Field(False, description="True if human review advised for this line")
 
-
 class MatchingSummary(BaseModel):
     """Aggregate SKU matching statistics.
     Provides quality metrics across all order lines for review decisions."""
@@ -111,17 +109,14 @@ class MatchingSummary(BaseModel):
     avg_confidence: float = Field(..., ge=0.0, le=1.0, description="Average match confidence")
     needs_review: bool = Field(..., description="True if any line confidence < 0.75")
     
-    # --------------------------- OPTIONAL BUG PREVENTION ---------------------------
-    # This validator ensures matched_lines does not exceed total_lines, which is optional,
-    # but we can enforce data integrity by raising a ValueError if the condition is violated.
+    # --- OPTIONAL BUG PREVENTION ---
+    # This validator ensures matched_lines doesn't exceed total_lines which is optional (enforce data integrity)
 
-    # field_validator decorator for matched_lines.
-    # This decorator is used to define a validation method for the 'matched_lines' field.
+    # field_validator decorator for matched_lines: defines a validation method for the matched_lines field
     @field_validator('matched_lines')
 
     # 2nd decorator for class method, so we can access class variables:
-    # in Pydantic v2, field validators MUST be classmethods, so we need both decorators stacked.
-    @classmethod
+    @classmethod # in Pydantic v2, field validators MUST be classmethods so we need both decorators stacked
 
     def validate_matched_lines(cls, v, info) -> None:  # cls is class, v is value, info has other fields
         """Ensure matched_lines ≤ total_lines."""
@@ -129,22 +124,14 @@ class MatchingSummary(BaseModel):
         if 'total_lines' in data and v > data['total_lines']:
             raise ValueError('matched_lines cannot exceed total_lines')
         return v
-    # -----------------------------------------------------------------------------------
 
-
-class EnrichedPurchaseOrder(BaseModel):
-    """Purchase order with matched SKUs and pricing.
-    Complete PO with all lines enriched and matching summary statistics."""
-    po_number: Optional[str] = Field(None, description="Reference to the original PO number if available")
-    customer: Optional[CustomerInfo] = Field(None, description="Customer details carried over from the parser")
-    order_lines: List[OrderLineEnriched] = Field(..., min_length=1, description="Enriched order lines")
-    matching_summary: MatchingSummary = Field(..., description="Matching statistics")
-
-
-# ============================================================================
-# 4. ORCHESTRATOR SUPPORT SCHEMAS
-# Not used as agent response formats, but for internal data flow.
-# ============================================================================
+class OrderTotals(BaseModel):
+    """Calculated order totals.
+    Contains subtotal, tax, shipping, and grand total amounts."""
+    subtotal: float = Field(..., ge=0, description="Sum of all line totals")
+    tax: float = Field(..., ge=0, description="Tax amount")
+    shipping: float = Field(..., ge=0, description="Shipping cost")
+    total: float = Field(..., ge=0, description="Grand total")
 
 class CreditCheckResult(BaseModel):
     """Credit check result for order approval.
@@ -155,11 +142,63 @@ class CreditCheckResult(BaseModel):
     available_credit: float = Field(..., ge=0, description="Available credit remaining")
     reason: Optional[str] = Field(None, description="Explanation if not approved")
 
+class EnrichedPurchaseOrder(BaseModel):
+    """Purchase order with matched SKUs, pricing, and downstream context.
+    Complete PO with all lines enriched, matching summary statistics, and optional
+    financial/credit metadata required for communications and fulfillment."""
+    po_number: Optional[str] = Field(None, description="Reference to the original PO number if available")
+    customer: Optional[CustomerInfo] = Field(None, description="Customer details carried over from the parser")
+    order_lines: list[OrderLineEnriched] = Field(..., min_length=1, description="Enriched order lines")
+    matching_summary: MatchingSummary = Field(..., description="Matching statistics")
+    totals: Optional[OrderTotals] = Field(None, description="Calculated order totals provided by the catalog agent")
+    credit_result: Optional[CreditCheckResult] = Field(None, description="Credit decision associated with this order")
+    gmail_message_id: Optional[str] = Field(None, description="Original Gmail message/thread id for downstream replies")
 
-class OrderTotals(BaseModel):
-    """Calculated order totals.
-    Contains subtotal, tax, shipping, and grand total amounts."""
-    subtotal: float = Field(..., ge=0, description="Sum of all line totals")
-    tax: float = Field(..., ge=0, description="Tax amount")
-    shipping: float = Field(..., ge=0, description="Shipping cost")
-    total: float = Field(..., ge=0, description="Grand total")
+
+# ============================================================================
+# 4. FULFILLMENT VALIDATION SCHEMAS
+# Used by fulfillment validator to determine order routing (success vs exception path).
+# ============================================================================
+
+class CustomerValidationStatus(BaseModel):
+    """Customer lookup/creation validation result."""
+    customer_id: str = Field(..., description="Airtable customer record ID")
+    matched: bool = Field(..., description="True if existing customer was found (not created)")
+    credit_limit: float = Field(..., ge=0, description="Customer credit limit")
+    open_ar: float = Field(..., ge=0, description="Current open accounts receivable")
+    is_new: bool = Field(..., description="True if customer was newly created")
+    customer_name: str = Field(..., description="Customer name")
+
+class InventoryValidationStatus(BaseModel):
+    """Inventory availability check result for a single SKU."""
+    sku: str = Field(..., description="Product SKU checked")
+    requested: int = Field(..., gt=0, description="Requested quantity")
+    available: int = Field(..., ge=0, description="Available inventory quantity")
+    in_stock: bool = Field(..., description="True if sufficient stock available")
+
+class FulfillabilityResult(BaseModel):
+    """Result of fulfillment validation check.
+    Determines whether order can be fulfilled and routes to appropriate handler."""
+    is_fulfillable: bool = Field(..., description="True if order can be completely fulfilled")
+    blocking_reasons: list[str] = Field(
+        default_factory=list, 
+        description="Reasons preventing fulfillment (CREDIT_EXCEEDED, PRODUCT_NOT_FOUND, OUT_OF_STOCK)"
+    )
+    warnings: list[str] = Field(
+        default_factory=list,
+        description="Non-blocking concerns that should be noted"
+    )
+    customer_status: CustomerValidationStatus = Field(
+        ..., 
+        description="Customer lookup/creation result with credit info"
+    )
+    inventory_status: list[InventoryValidationStatus] = Field(
+        default_factory=list,
+        description="Inventory check results for each line item"
+    )
+
+
+# ============================================================================
+# 5. COMMS & EXCEPTIONS AGENT 
+# Does NOT require new schemas beyond those defined above.
+# ============================================================================
