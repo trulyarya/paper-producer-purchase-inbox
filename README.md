@@ -268,8 +268,8 @@ Gmail → FastAPI → AI Agents → Services → Invoice PDF
         ┌───────────────────┼───────────────────┐
         ↓                   ↓                   ↓
 ┌───────────────┐  ┌─────────────────┐  ┌────────────────────────────┐
-│ EMAIL TRIAGE  │  │  PO PARSER      │  │ Deterministic candidate   │
-│    AGENT      │  │     AGENT       │  │ builder (`prepare_sku…`)  │
+│ EMAIL TRIAGE  │  │  PO PARSER      │  │  Deterministic candidate   │
+│    AGENT      │  │     AGENT       │  │  builder (`prepare_sku…`)  │
 └───────────────┘  └─────────────────┘  └────────────────────────────┘
                                                   │
                                                   ↓
@@ -280,8 +280,8 @@ Gmail → FastAPI → AI Agents → Services → Invoice PDF
                                                   │
                                                   ↓
 ┌──────────────────────────────────────────────────────────┐
-│ Deterministic services: credit checks, totals, PDF, CRM   │
-│ write, Gmail reply, Slack notification                    │
+│ Deterministic services: credit checks, totals, PDF, CRM  │
+│ write, Gmail reply, Slack notification                   │
 └──────────────────────────────────────────────────────────┘
 ```
 
