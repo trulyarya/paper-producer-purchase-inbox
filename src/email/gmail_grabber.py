@@ -7,12 +7,17 @@ Stores credentials in `../cred/token.json` for persistent access.
 import os
 from pathlib import Path
 from bs4 import BeautifulSoup # For HTML parsing
+
 from google.auth.transport.requests import Request # For refreshing tokens
 from google.oauth2.credentials import Credentials # For handling OAuth2 credentials
 from google_auth_oauthlib.flow import InstalledAppFlow # For OAuth2 flow
 from googleapiclient.discovery import build # For building the Gmail API service
 
-SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]  # Read-only access to Gmail
+SCOPES = [
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.modify",
+    "https://www.googleapis.com/auth/gmail.send",
+]  # Read, modify, and send access to Gmail
 
 
 def authenticate_gmail() -> any:
@@ -60,7 +65,7 @@ def fetch_unread_emails(gmail_service: any) -> list[dict]:
     messages = gmail_service.users().messages().list(
         userId="me", # 'me' refers to the authenticated user
         q="is:unread", # Gmail search query for unread emails
-        maxResults=100, # Limit to last 100 unread emails
+        maxResults=1, # Limit to last 1 unread email
     ).execute().get(
         "messages", # Get the list of messages from the response
         [],
@@ -90,11 +95,77 @@ def fetch_unread_emails(gmail_service: any) -> list[dict]:
             }
         )
     
+    # # Log fetched email count and details
+    # print(f"[gmail_grabber] fetched {len(emails)} unread message(s)")
+    # for email in emails:
+    #     print(f"[gmail_grabber] id={email['id']} subject={email['subject']!r} sender={email['sender']!r}")
+
     return emails
 
 
+def mark_email_as_read(message_id: str) -> dict[str, str]:
+    """Remove the UNREAD label from the given Gmail message."""
+    service = authenticate_gmail()
+    service.users().messages().modify(
+        userId="me",
+        id=message_id,
+        body={"removeLabelIds": ["UNREAD"]},
+    ).execute()
+    return {"id": message_id, "status": "marked_as_read"}
 
 
+def reply_to_email(message_id: str, reply_body: str, pdf_path: str | None = None) -> dict[str, str]:
+    """Send a reply message to the given Gmail thread, optionally attaching a PDF invoice.
+    Args:
+        message_id (str): The ID of the original email message to reply to.
+        reply_body (str): The body text of the reply email.
+        pdf_path (str | None): Optional file path to a PDF invoice to attach.
+    Returns:
+        dict[str, str]: A dictionary containing the sent message ID and status.
+    """
+    import base64
+    from email.message import EmailMessage
+    
+    service = authenticate_gmail()
+    
+    # Get original message to extract headers for reply
+    original = service.users().messages().get(userId="me", id=message_id, format="full").execute()
+    headers = {h["name"]: h["value"] for h in original["payload"]["headers"]}
+    
+    # Create reply message
+    msg = EmailMessage()
+    msg["To"] = headers.get("From", "")
+    msg["Subject"] = "Re: " + headers.get("Subject", "")
+    msg["In-Reply-To"] = headers.get("Message-ID", "")
+    msg["References"] = headers.get("Message-ID", "")
+    msg.set_content(reply_body)
+    
+    if pdf_path: 
+        pdf_file = Path(pdf_path)
+
+        # Attach PDF invoice if provided
+        msg.add_attachment(
+            pdf_file.read_bytes(),
+            maintype="application",
+            subtype="pdf",
+            filename=pdf_file.name
+        )
+    
+    # Send the reply
+    encoded_message = base64.urlsafe_b64encode(msg.as_bytes()).decode()
+    
+    result = service.users().messages().send(
+        userId="me",
+        body={
+            "raw": encoded_message,
+            "threadId": original["threadId"]
+        }
+    ).execute()
+    
+    return {"id": result["id"], "status": "sent"}
+
+
+    
 
 #---------------------------------------#
 #------------ Main function ------------#
