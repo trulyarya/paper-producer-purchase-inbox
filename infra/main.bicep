@@ -28,6 +28,9 @@ param environmentName string = 'dev' // Default environment is 'dev'
 @description('Your email address for notifications') // Used for tagging resources
 param adminEmail string // User input: admin contact email
 
+@description('Azure AD Object ID of the user/service principal for local development access (optional)')
+param developerObjectId string = '' // Optional: Get via `az ad signed-in-user show --query id -o tsv`
+
 // ----------------------------------------------------------------------------
 // VARIABLES - Computed values used throughout the deployment
 // ----------------------------------------------------------------------------
@@ -36,11 +39,17 @@ param adminEmail string // User input: admin contact email
 var uniqueSuffix = uniqueString(resourceGroup().id) // Generates a unique hash from resource group ID (always same for same RG)
 var resourcePrefix = '${projectName}-${environmentName}' // Combines project name and environment (e.g., "paperco-dev")
 
+// Built-in Azure role definition IDs (these are constant across all Azure subscriptions)
+// This is for "Storage Blob Data Contributor" and a globally constant GUID that's the same across ALL Azure subscriptions.
+// visit https://learn.microsoft.com/en-us/azure/role-based-access-control/built-in-roles for more info on built-in roles & GUIDs.
+var storageBlobDataContributorRoleId = 'ba92f5b4-2d11-453d-a403-e96b0029c9fe' // Allows read/write/delete access to blob containers & data
+
 // Resource names
 var storageAccountName = toLower(replace('${projectName}${environmentName}${take(uniqueSuffix, 8)}', '-', '')) // Storage names: lowercase, no hyphens, max 24 chars
 var searchServiceName = '${resourcePrefix}-search-${uniqueSuffix}' // Example: paperco-dev-search-abc123xyz
 var containerAppEnvName = '${resourcePrefix}-cae-${uniqueSuffix}' // CAE = Container Apps Environment
 var logAnalyticsName = '${resourcePrefix}-logs-${uniqueSuffix}' // For monitoring and diagnostics
+var appInsightsName = '${resourcePrefix}-ai-${uniqueSuffix}' // Application Insights for monitoring
 var aiAccountName = toLower('${resourcePrefix}-aoai-${take(uniqueSuffix, 8)}') // Azure AI Foundry account name
 var aiProjectName = toLower('${resourcePrefix}-project') // Azure AI Foundry project name
 var projectDisplayName = '${resourcePrefix} project' // Friendly project display name
@@ -74,6 +83,21 @@ resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2025-02-01' = { 
 }
 
 // ----------------------------------------------------------------------------
+// MODULE 1a: Application Insights (for application monitoring)
+// ----------------------------------------------------------------------------
+
+resource appInsights 'Microsoft.Insights/components@2020-02-02' = { // Application Insights resource
+  name: appInsightsName // Resource name following naming convention
+  location: location // Same region as other resources
+  tags: commonTags // Apply standard tags
+  kind: 'web' // Type of application being monitored (web, mobile, other)
+  properties: { // Configuration settings
+    Application_Type: 'web' // Application type for telemetry
+    WorkspaceResourceId: logAnalytics.id // Link to Log Analytics workspace for data storage
+  }
+}
+
+// ----------------------------------------------------------------------------
 // MODULE 2: Storage Account (for invoice PDFs)
 // ----------------------------------------------------------------------------
 
@@ -89,7 +113,7 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2025-01-01' = { // St
     accessTier: 'Hot' // Optimized for frequent access (vs 'Cool' for archival)
     supportsHttpsTrafficOnly: true // Force HTTPS for security
     minimumTlsVersion: 'TLS1_2' // Minimum encryption version
-    allowBlobPublicAccess: false // Disable anonymous public access for security
+    allowBlobPublicAccess: true // Enable blob-level public access (required for anonymous blob access)
   }
 }
 
@@ -103,7 +127,29 @@ resource invoicesContainer 'Microsoft.Storage/storageAccounts/blobServices/conta
   parent: blobService // This belongs to the blob service
   name: 'invoices' // Container name (where PDF files will be stored)
   properties: { // Container settings
-    publicAccess: 'None' // Private access only (no anonymous access)
+    publicAccess: 'Blob' // Allow anonymous read access to individual blobs (but not container listing)
+  }
+}
+
+// Grant AI account's managed identity access to storage blobs
+resource aiAccountStorageRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(storageAccount.id, aiAccount.id, storageBlobDataContributorRoleId) // Generate unique but deterministic name
+  scope: storageAccount // Apply role assignment to the storage account
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageBlobDataContributorRoleId) // The role to assign
+    principalId: aiAccount.identity.principalId // The managed identity of the AI account
+    principalType: 'ServicePrincipal' // This is a service principal (managed identity)
+  }
+}
+
+// Grant developer access to storage blobs for local development (if developerObjectId is provided)
+resource developerStorageRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(developerObjectId)) {
+  name: guid(storageAccount.id, developerObjectId, storageBlobDataContributorRoleId) // Generate unique but deterministic name
+  scope: storageAccount // Apply role assignment to the storage account
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageBlobDataContributorRoleId) // The role to assign
+    principalId: developerObjectId // Your Azure AD user object ID
+    principalType: 'User' // This is a user principal
   }
 }
 
@@ -155,7 +201,7 @@ resource project 'Microsoft.CognitiveServices/accounts/projects@2025-06-01' = {
 
 // Deployment 1: gpt-5-mini
 resource gpt5Mini 'Microsoft.CognitiveServices/accounts/deployments@2025-06-01' = {
-  name: 'gpt-5-mini'
+  name: 'gpt-4.1'
   parent: aiAccount
   sku: {
     name: 'DataZoneStandard'     // or whatever SKU you’re allowed to use
@@ -163,7 +209,7 @@ resource gpt5Mini 'Microsoft.CognitiveServices/accounts/deployments@2025-06-01' 
   }
   properties: {
     model: {
-      name: 'gpt-5-mini'
+      name: 'gpt-4.1'
       format: 'OpenAI'
       publisher: 'OpenAI'
       version: '2025-08-07'
@@ -205,14 +251,14 @@ resource searchService 'Microsoft.Search/searchServices@2025-05-01' = { // Azure
   location: location // Azure region
   tags: commonTags // Standard tags
   sku: { // Pricing tier
-    name: 'basic' // Free tier, or Basic tier (~$75/month, sufficient for demo with vector search)
+    name: 'free' // Free tier (supports vector search and hybrid search, up to 50MB/10k docs)
   }
   properties: { // Search service configuration
     replicaCount: 1 // Number of replicas for high availability (1 = single instance)
-    partitionCount: 1 // Number of partitions for data storage (1 = up to 2GB storage)
+    partitionCount: 1 // Number of partitions for data storage (1 = up to 50MB storage on free tier)
     hostingMode: 'default' // Hosting mode ('default' vs 'highDensity' for many small indexes)
     publicNetworkAccess: 'enabled' // Allow access from internet
-    semanticSearch: 'free' // Enable semantic ranking for better search results (free tier available)
+    // semanticSearch removed - not needed for hybrid (vector + keyword) search
   }
 }
 
@@ -259,6 +305,9 @@ output invoicesContainerName string = invoicesContainer.name // Should be 'invoi
 
 @description('The name of the Container Apps Environment') // Environment name for deploying apps
 output containerAppEnvironmentName string = containerAppEnvironment.name // Used when deploying container apps
+
+@description('Application Insights connection string') // Full connection string (recommended over instrumentation key)
+output appInsightsConnectionString string = appInsights.properties.ConnectionString // Used in app configuration
 
 @description('Resource group name') // The resource group containing all resources
 output resourceGroupName string = resourceGroup().name // Useful for scripting and automation
