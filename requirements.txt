@@ -1,12 +1,20 @@
-requests
-python-dotenv
-beautifulsoup4
-pydantic
+requests # For making HTTP requests to APIs
+python-dotenv # For environment variable management
+beautifulsoup4 # For HTML parsing
+pydantic # For data validation
+slack-sdk # For Slack integration
+weasyprint # For PDF generation from HTML
+jinja2 # For rendering HTML templates
+
+# Google API client libraries for Gmail
 google-auth-oauthlib
 google-auth-httplib2
 google-api-python-client
-slack-sdk
+
+# Azure SDK libraries
 azure-identity
 azure-ai-agents
 azure-ai-projects
 agent-framework
+azure-storage-blob
+azure-search-documents
