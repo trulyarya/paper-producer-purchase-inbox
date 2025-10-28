@@ -152,11 +152,11 @@
 <body>
   <div class="invoice-wrapper">
     <header>
-      <div class="brand">[Your Company Name]</div>
+      <div class="brand">AriCo</div>
       <div class="invoice-meta">
-        <strong>Invoice #[INVOICE_NUMBER]</strong>
-        Issued: [ISSUE_DATE]<br>
-        Due: [DUE_DATE]
+        <strong>Invoice #{{ invoice.number }}</strong>
+        Issued: {{ invoice.issue_date }}<br>
+        Due: {{ invoice.due_date }}
       </div>
     </header>
 
@@ -164,25 +164,25 @@
       <div class="grid">
         <div>
           <h3>Bill To</h3>
-          <p>[Customer Company]</p>
-          <p>[Contact Name]</p>
-          <p>[Address Line 1]</p>
-          <p>[Address Line 2]</p>
-          <p>[Email]</p>
+          <p>{{ customer.company }}</p>
+          <p>{{ customer.contact }}</p>
+          <p>{{ customer.email }}</p>
+          <p>{{ customer.address1 }}</p>
+          {% if customer.address2 %}<p>{{ customer.address2 }}</p>{% endif %}
         </div>
         <div>
           <h3>From</h3>
-          <p>[Your Company Name]</p>
-          <p>[Street Address]</p>
-          <p>[City, State ZIP]</p>
-          <p>[Contact Email]</p>
-          <p>[Phone]</p>
+          <p>AriCo GmbH</p>
+          <p>Blah-Str. 13</p>
+          <p>Munich, 80800</p>
+          <p>support@seddigh.eu</p>
+          <p>+49 123 456 789</p>
         </div>
         <div>
           <h3>Payment</h3>
-          <p>Terms: [Payment Terms]</p>
-          <p>Method: [Preferred Method]</p>
-          <p>Reference: [PO Number]</p>
+          <p>Terms: {{ payment.terms }}</p>
+          <p>Method: {{ payment.method }}</p>
+          <p>Reference: {{ payment.po_number }}</p>
         </div>
       </div>
 
@@ -197,44 +197,47 @@
           </tr>
         </thead>
         <tbody>
-          <!-- Repeat for each line item -->
+          {% for item in items %}
           <tr>
-            <td>[Product / Service Description]</td>
-            <td>[Quantity]</td>
-            <td>[Unit]</td>
-            <td>[Unit Price]</td>
-            <td>[Line Total]</td>
+            <td>{{ item.description }}</td>
+            <td>{{ item.qty }}</td>
+            <td>{{ item.unit }}</td>
+            <td>{{ "%.2f"|format(item.unit_price) }}</td>
+            <td>{{ "%.2f"|format(item.line_total) }}</td>
           </tr>
+          {% endfor %}
         </tbody>
       </table>
 
       <div class="totals">
         <div class="totals-row">
           <span>Subtotal</span>
-          <span>[Subtotal]</span>
+          <span>{{ "%.2f"|format(totals.subtotal) }}</span>
         </div>
         <div class="totals-row">
-          <span>Tax ([Tax Rate]%)</span>
-          <span>[Tax Amount]</span>
+          <span>Tax 19% MwSt.</span>
+          <span>{{ "%.2f"|format(totals.tax) }}</span>
         </div>
+        {% if totals.shipping %}
         <div class="totals-row">
           <span>Shipping</span>
-          <span>[Shipping]</span>
+          <span>{{ "%.2f"|format(totals.shipping) }}</span>
         </div>
+        {% endif %}
         <div class="totals-row total">
           <span>Total Due</span>
-          <span>[Total Due]</span>
+          <span>{{ "%.2f"|format(totals.total) }}</span>
         </div>
       </div>
 
       <div class="notes">
         <strong>Notes</strong><br>
-        [Thank you for your business! Please remit payment within 30 days. Include the invoice number on your remittance.]
+        Thank you for your purchase! Please remit payment within 30 days. Include the invoice number on your remittance.
       </div>
     </section>
 
     <footer>
-      [Your Company Name] · [Website URL] · [Support Email] · [Phone Number]
+      AriCo   ·   www.seddigh.eu   ·   support@seddigh.eu   ·   +49 123 456 789
     </footer>
   </div>
 </body>
