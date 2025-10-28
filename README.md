@@ -2,42 +2,96 @@
 
 AI-powered Order-to-Cash system that converts purchase order emails into invoices using Azure AI agents.
 
+## Current Status
+
+- [x] Project planning and PRD
+- [x] Azure infrastructure (Bicep)
+- [x] Slack Webhook integration
+- [x] Airtable base schema and setup (sample data loaded)
+- [x] Gmail integration and API setup
+- [x] Multi-agent workflow with conditional routing
+- [x] Email classification and PO parsing agents
+- [x] SKU resolution with candidate preparation
+- [x] Credit check and order validation
+- [x] Order fulfillment and rejection flows
+- [x] Email reply composition and sending
+- [x] Slack notifications for operations team
+- [x] Azure AI Search index population from Airtable
+- [x] Invoice PDF generation (HTML template + blob storage)
+- [ ] CRM order and invoice record creation
+- [ ] Container App deployment (Docker)
+- [ ] Scheduled job (check emails every 5 minutes)
+- [ ] FastAPI REST API wrapper
+- [ ] End-to-end testing and validation
+
 ## What This Does
 
 1. Monitors Gmail inbox for purchase order emails
-2. Uses an Azure AI Foundry multi-agent workflow orchestrated by a single brain:
-   - **Email Triage Agent** – filters true purchase orders.
-   - **PO Parser Agent** – extracts a clean `PurchaseOrder` JSON.
-   - **SKU Resolver Agent** – reviews candidate SKUs provided by deterministic search and finalizes matches.
-3. Deterministic Python helpers take care of credit checks, totals, CRM writes, invoice PDF generation, and notifications.
-4. Generates invoices, replies to buyers, and notifies Slack automatically.
+2. Uses a multi-agent workflow with specialized agents and conditional routing:
+   - **Classifier** – identifies purchase orders from inbox messages
+   - **Parser** – extracts structured PO data (customer, line items, quantities)
+   - **Resolver** – matches items to SKUs, checks credit, calculates totals
+   - **Decider** – determines if order is fulfillable (availability + credit)
+   - **Fulfiller** – processes approved orders (inventory, CRM, invoice, notifications)
+   - **Rejector** – handles unfulfillable orders with customer communication
+3. Integrates deterministic tools for credit checks, inventory updates, invoice generation, and CRM persistence
+4. Sends confirmation emails to customers and Slack notifications to operations team
 
 ### Multi-Agent Workflow
 
-The system uses three specialized AI agents orchestrated through Azure AI Foundry Agent Service:
+The system uses six specialized agents with conditional routing:
 
-#### 1. Email Intake Agent (Extraction)
+#### 1. Classifier Agent
 
-**What it does**: Reads messy PO emails from Gmail and returns strict JSON with `poNumber`, `customer`, `lines` (with `qty` and `UOM`), and `requestedDate`.
+**Purpose**: Fetches unread Gmail messages and identifies purchase orders.
 
-**Why an agent**: Plain code with regex or templates breaks on real-world variability, typos, mixed languages, and odd phrasing, while an LLM can generalize and still emit validated JSON with confidence scores.
+**Output**: `ClassifiedEmail` with `is_po` boolean, confidence reason, and the email object.
 
-#### 2. SKU Resolver Agent (Semantic Matching)
+**Why an agent**: Handles variability in email formats, subjects, and sender patterns that regex cannot reliably detect.
 
-**What it does**: Maps each requested line to the best product by running semantic vector search over the catalog (Azure AI Search), then returns matched `SKU`, `UOM`, `unitPrice`, and a short rationale.
+#### 2. Parser Agent
 
-**Why an agent**: Static keyword rules and synonym lists miss near duplicates and novel wording, while an LLM-guided search can understand intent, compare close candidates, and justify the pick.
+**Purpose**: Extracts structured purchase order data from confirmed PO emails.
 
-#### Deterministic Orchestrator Services
+**Output**: `ParsedPO` with customer details and line items (SKU/name, quantity).
 
-After SKU resolution, the orchestrator calls local Python helpers to:
-- prepare SKU candidate lists via `src/ai_search_indexer.py`
-- run credit checks and totals
-- generate the invoice PDF
-- send the Gmail reply and Slack alert
-- post the order to Airtable CRM
+**Why an agent**: Interprets natural language requests, handles typos and formatting inconsistencies, and normalizes data into a clean structure.
 
-> The legacy communications agent is currently on standby; the orchestrator now handles messaging through deterministic helpers.
+#### 3. Resolver Agent
+
+**Purpose**: Resolves products, checks customer credit, and calculates order totals.
+
+**Output**: `ResolvedPO` with matched SKUs, pricing, availability, credit status, and calculated tax/shipping.
+
+**Tools**: `calculate_totals`, `check_credit`, `prepare_sku_candidates` (planned for AI Search integration).
+
+#### 4. Decider Agent
+
+**Purpose**: Evaluates if the order can be fulfilled based on item availability and customer credit.
+
+**Output**: `Decision` with status (`FULFILLABLE` or `UNFULFILLABLE`) and reasoning.
+
+**Logic**: No tools needed—analyzes the `ResolvedPO` data directly.
+
+#### 5. Fulfiller Agent (Conditional)
+
+**Purpose**: Processes approved orders end-to-end.
+
+**Actions**: Updates inventory, adjusts customer credit, generates invoice PDF, creates CRM records, sends confirmation email, notifies Slack.
+
+**Output**: `FulfillmentResult` with order ID and invoice number.
+
+**Route condition**: Triggered only when `status == "FULFILLABLE"`.
+
+#### 6. Rejector Agent (Conditional)
+
+**Purpose**: Handles unfulfillable orders with professional customer communication.
+
+**Actions**: Composes rejection email explaining issues (credit/availability), sends reply, optionally notifies operations team.
+
+**Output**: `RejectResult` confirming successful rejection handling.
+
+**Route condition**: Triggered only when `status == "UNFULFILLABLE"`.
 
 ## Quick Start
 
@@ -257,116 +311,221 @@ Gmail → FastAPI → AI Agents → Services → Invoice PDF
                 +--------------------------+    +------------------------+
 ```
 
-**High-Level Multi-Agent Orchestration:**
+**Multi-Agent Workflow with Conditional Routing:**
 
 ```txt
-┌─────────────────────────────────────────────────────────────┐
-│                   ORCHESTRATOR AGENT                        │
-│  Calls tools, tracks state, and writes the final summary.   │
-└─────────────────────────────────────────────────────────────┘
-                            │
-        ┌───────────────────┼───────────────────┐
-        ↓                   ↓                   ↓
-┌───────────────┐  ┌─────────────────┐  ┌────────────────────────────┐
-│ EMAIL TRIAGE  │  │  PO PARSER      │  │  Deterministic candidate   │
-│    AGENT      │  │     AGENT       │  │  builder (`prepare_sku…`)  │
-└───────────────┘  └─────────────────┘  └────────────────────────────┘
-                                                  │
-                                                  ↓
-                                         ┌──────────────────┐
-                                         │  SKU RESOLVER    │
-                                         │     AGENT        │
-                                         └──────────────────┘
-                                                  │
-                                                  ↓
-┌──────────────────────────────────────────────────────────┐
-│ Deterministic services: credit checks, totals, PDF, CRM  │
-│ write, Gmail reply, Slack notification                   │
-└──────────────────────────────────────────────────────────┘
+        ┌──────────────┐
+        │ CLASSIFIER   │  Fetches unread emails, identifies POs
+        └──────┬───────┘
+               │ if is_po == True
+               ↓
+        ┌──────────────┐
+        │   PARSER     │  Extracts customer and line items
+        └──────┬───────┘
+               │
+               ↓
+        ┌──────────────┐
+        │  RESOLVER    │  Matches SKUs, checks credit, calculates totals
+        └──────┬───────┘
+               │
+               ↓
+        ┌──────────────┐
+        │   DECIDER    │  Evaluates fulfillability
+        └──────┬───────┘
+               │
+        ┌──────┴───────────────┐
+        │                      │
+        ↓                      ↓
+┌───────────────┐      ┌──────────────┐
+│  FULFILLER    │      │  REJECTOR    │
+│ (if FULFILL-  │      │ (if UNFULF-  │
+│  ABLE)        │      │  ILLABLE)    │
+└───────────────┘      └──────────────┘
+│                      │
+├─ Update inventory    ├─ Compose rejection email
+├─ Update credit       ├─ Send email reply
+├─ Generate invoice    └─ Notify Slack (optional)
+├─ Create CRM records
+├─ Send confirmation
+└─ Notify Slack
 ```
 
-**Multi-Agent Orchestration with Tools:**
+**Tool Usage by Agent:**
 
 ```txt
-╔═══════════════════════════════════════════════════════════════════════════╗
-║                O2C ORCHESTRATION WITH CONNECTED AGENTS                    ║
-╚═══════════════════════════════════════════════════════════════════════════╝
+Classifier
+├─ gmail_grabber()            Fetch unread messages
 
-1. Orchestrator calls `gmail_grabber()` to list unread threads.
-2. For each email:
-   a. `classify_email_as_po` → skip if not a PO.
-   b. `parse_purchase_order` → structured PO JSON.
-   c. `prepare_sku_candidates` → vector + CRM shortlist.
-   d. `resolve_product_skus` → enriched order lines with reasoning.
-   e. Deterministic helpers: `check_credit`, `calculate_totals`,
-      `compose_confirmation_email`, `generate_invoice_pdf`,
-      `send_email_reply`, `send_slack_notification`, `add_order_to_crm`.
-3. Orchestrator aggregates the run log and returns a final summary.
+Parser
+├─ clean_email_payload()      Normalize email text
+
+Resolver
+├─ prepare_sku_candidates()   Build product match candidates (AI Search planned)
+├─ calculate_totals()          Compute subtotal, tax, shipping, total
+└─ check_credit()              Validate customer credit availability
+
+Decider
+└─ (no tools)                  Analyzes ResolvedPO data directly
+
+Fulfiller
+├─ update_inventory()          Deduct ordered quantities
+├─ update_customer_credit()    Adjust credit exposure
+├─ generate_invoice_pdf()      Create invoice document
+├─ add_order_to_crm()          Persist order records
+├─ compose_fulfillment_email() Draft confirmation message
+├─ send_email_reply()          Send email with invoice attachment
+└─ send_slack_notification()   Alert operations team
+
+Rejector
+├─ send_email_reply()          Send rejection explanation
+└─ send_slack_notification()   Notify ops team (optional)
 ```
 
 **Agent Data Flow:**
 
 ```txt
-╔═══════════════════════════════════════════════════════════════════════════╗
-║                            DATA FLOW                                      ║
-╚═══════════════════════════════════════════════════════════════════════════╝
-
-  Gmail Inbox  →  [Email JSON]  →  Triage  →  [TriageResult]
-                                      ↓
-                                   if is_po = true
-                                      ↓
-                                  PO Parser  →  [PurchaseOrder]
-                                      ↓
-                      prepare_sku_candidates  →  [Candidate Bundles]
-                                      ↓
-                                  SKU Resolver  →  [EnrichedPurchaseOrder]
-                                      ↓
-                 Deterministic helpers (credit/totals/PDF/CRM/email/Slack)
+┌─────────────────────────────────────────────────────────────────────────┐
+│                          GMAIL INBOX                                    │
+│                    (Unread purchase order emails)                       │
+└────────────────────────────────┬────────────────────────────────────────┘
+                                 │
+                                 ▼
+                    ┌────────────────────────┐
+                    │   CLASSIFIER AGENT     │
+                    │  Tool: gmail_grabber   │
+                    └────────┬───────────────┘
+                             │
+                             ▼
+              ClassifiedEmail {
+                email: {id, subject, sender, body}
+                is_po: bool
+                reason: string
+              }
+                             │
+                             │ Conditional: if is_po == True
+                             ▼
+                    ┌────────────────────────┐
+                    │     PARSER AGENT       │
+                    │ Tool: clean_email_*    │
+                    └────────┬───────────────┘
+                             │
+                             ▼
+              ParsedPO {
+                email_id: string
+                customer_name: string
+                customer_address: string
+                line_items: [{sku_or_name, qty}]
+              }
+                             │
+                             ▼
+                    ┌────────────────────────┐
+                    │    RESOLVER AGENT      │
+                    │ Tools: calculate_*,    │
+                    │  check_credit, etc.    │
+                    └────────┬───────────────┘
+                             │
+                             ▼
+              ResolvedPO {
+                email_id, customer_id, customer_name
+                customer_credit_ok: bool
+                items: [{sku, name, qty, price, available, subtotal}]
+                tax: float
+                shipping: float
+                total: float
+              }
+                             │
+                             ▼
+                    ┌────────────────────────┐
+                    │     DECIDER AGENT      │
+                    │   (No tools needed)    │
+                    └────────┬───────────────┘
+                             │
+                             ▼
+              Decision {
+                status: "FULFILLABLE" | "UNFULFILLABLE"
+                reason: string
+                payload: ResolvedPO
+              }
+                             │
+              ┌──────────────┴──────────────┐
+              │                             │
+              ▼                             ▼
+    ┌─────────────────────┐      ┌──────────────────────┐
+    │  FULFILLER AGENT    │      │   REJECTOR AGENT     │
+    │  (if FULFILLABLE)   │      │  (if UNFULFILLABLE)  │
+    │                     │      │                      │
+    │ Tools:              │      │ Tools:               │
+    │ • update_inventory  │      │ • send_email_reply   │
+    │ • update_credit     │      │ • send_slack_*       │
+    │ • generate_invoice  │      │                      │
+    │ • add_order_to_crm  │      └──────────┬───────────┘
+    │ • compose_email     │                 │
+    │ • send_reply        │                 ▼
+    │ • send_slack_*      │        RejectResult {
+    └──────────┬──────────┘          ok: bool
+               │                   }
+               ▼                        │
+    FulfillmentResult {                 │
+      ok: bool                          │
+      order_id: string                  │
+      invoice_no: string                │
+    }                                   │
+               │                        │
+               └────────────┬───────────┘
+                            │
+                            ▼
+              ┌─────────────────────────────┐
+              │     WORKFLOW COMPLETE       │
+              │  • Email marked as read     │
+              │  • Customer notified        │
+              │  • Operations team alerted  │
+              └─────────────────────────────┘
 ```
 
-**Agent Schemas:**
+**Pydantic Schemas:**
 
 ```txt
-╔═══════════════════════════════════════════════════════════════════════════╗
-║                        PYDANTIC SCHEMAS                                   ║
-╚═══════════════════════════════════════════════════════════════════════════╝
+Email                        ClassifiedEmail
+├─ id                        ├─ email: Email
+├─ subject                   ├─ is_po: bool
+├─ sender                    └─ reason: str
+└─ body
 
-  TriageResult             PurchaseOrder              OrderLine
-  ├─ is_po                 ├─ po_number               ├─ line_reference
-  ├─ confidence            ├─ order_date              ├─ product_description
-  └─ reason                ├─ customer (name/contact) ├─ quantity / unit
-                           ├─ order_lines[]           ├─ unit_price / line_total
-                           ├─ net_amount              └─ product_code
-                           └─ gmail_message_id
+ParsedPO                     LineItem
+├─ email_id                  ├─ sku_or_name: str
+├─ customer_name             └─ qty: int (>0)
+├─ customer_address
+└─ line_items: List[LineItem]
 
-  SkuCandidate             LineCandidateBundle        SkuResolutionPayload
-  ├─ sku                   ├─ line_index              ├─ purchase_order
-  ├─ title/description     ├─ original_line           └─ line_candidates[]
-  ├─ similarity_score      └─ candidates[]
-  ├─ unit/unit_price
-  └─ qty_available
+ResolvedPO                   ResolvedItem
+├─ email_id                  ├─ sku: str
+├─ customer_id               ├─ name: str
+├─ customer_name             ├─ qty: int (>0)
+├─ customer_credit_ok: bool  ├─ price: float (>=0)
+├─ items: List[ResolvedItem] ├─ available: bool
+├─ tax: float                └─ subtotal: float
+├─ shipping: float
+└─ total: float
 
-  EnrichedPurchaseOrder    OrderLineEnriched          MatchingSummary
-  ├─ po_number             ├─ product_code            ├─ total_lines
-  ├─ customer              ├─ unit_price/line_total   ├─ matched_lines
-  ├─ order_lines[]         ├─ match_confidence        ├─ avg_confidence
-  └─ matching_summary      ├─ match_reason            └─ needs_review flag
-                           └─ needs_review
+Decision                     FulfillmentResult
+├─ status: FULFILLABLE       ├─ ok: bool
+│   | UNFULFILLABLE          ├─ order_id: str
+├─ reason: str               └─ invoice_no: str
+└─ payload: ResolvedPO
+
+RejectResult
+├─ ok: bool
 ```
 
 **External Integrations:**
 
 ```txt
-╔═══════════════════════════════════════════════════════════════════════════╗
-║                      EXTERNAL INTEGRATIONS                                ║
-╚═══════════════════════════════════════════════════════════════════════════╝
-
-  📧 Gmail API          →  Fetch/Send emails
-  🔍 Azure AI Search    →  Vector similarity search for SKU matching
-  📊 Airtable CRM       →  Product catalog, pricing, customer data
-  💬 Slack Webhooks     →  Exception notifications
+Gmail API          Fetch unread emails, send replies with attachments
+Azure AI Search    Vector search for product SKU matching (planned)
+Airtable CRM       Product catalog, customer data, order/invoice records
+Slack Webhooks     Operations team notifications for orders and exceptions
+Azure Blob Storage Invoice PDF storage (planned)
 ```
-
 
 ## Cost Estimate
 
@@ -379,23 +538,17 @@ Running 24/7 with light usage: **~$115-170/month**
 
 ## Tech Stack
 
-- **Backend**: Python, FastAPI
-- **AI**: Azure AI Foundry (GPT-5-mini, text-embedding-3-large)
-- **Search**: Azure AI Search (vector search)
-- **Storage**: Azure Blob Storage, Airtable
-- **Infrastructure**: Azure Bicep
-- **Hosting**: Azure Container Apps
-
-## Current Status
-
-- [x] Project planning and PRD
-- [x] Azure infrastructure (Bicep)
-- [x] Slack Webhook URL
-- [x] Airtable base schema and setup (incl. rows of sample data): As our "fake" CRM
-- [x] Gmail integration and API setup
-- [ ] FastAPI application
-- [ ] AI agent implementations
-- [ ] Testing and validation
+- **Backend**: Python 3.11+
+- **Framework**: Custom agent framework with async workflow builder
+- **AI**: Azure OpenAI (GPT-4o-mini for reasoning, text-embedding-3-large planned)
+- **Auth**: Azure CLI credential for local dev, Managed Identity for production
+- **Search**: Azure AI Search (vector search for SKU matching)
+- **Storage**: Azure Blob Storage (invoice PDFs), Airtable (CRM/catalog)
+- **Email**: Gmail API with OAuth 2.0
+- **Messaging**: Slack Incoming Webhooks
+- **Infrastructure**: Azure Bicep templates
+- **Hosting**: Azure Container Apps (planned)
+- **Observability**: Custom observability setup with workflow streaming
 
 ## Contributing
 
