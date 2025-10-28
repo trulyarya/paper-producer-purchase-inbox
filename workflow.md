@@ -1,145 +1,100 @@
-# Workflow Overview
+# Purchase Order Workflow
 
-```asciidoc
-###########################################
-SETUP: Data Sync to Azure AI Search Indexes
-###########################################
+## Quick Setup Checklist
 
-Module: ai-search/azure_search_tools.py
+| Step | Why it matters | Call |
+|---|---|---|
+| Seed the products index | Azure AI Search needs the schema before uploads | `src/ai-search/azure_search_tools.create_products_index_schema()` |
+| Seed the customers index | Same for customer lookups | `src/ai-search/azure_search_tools.create_customer_index_schema()` |
+| Load products from Airtable | Feeds live catalog data into search | `src/ai-search/azure_search_tools.ingest_products_from_airtable()` |
+| Load customers from Airtable | Makes resolver credit/customer logic work | `src/ai-search/azure_search_tools.ingest_customers_from_airtable()` |
 
-1. create_products_index_schema()      # Define product index schema
-2. create_customer_index_schema()      # Define customer index schema
-3. ingest_products_from_airtable()     # Airtable → AI Search (Products)
-4. ingest_customers_from_airtable()    # Airtable → AI Search (Customers)
+Re-run these whenever you change schemas or Airtable data you depend on.
 
-┌─────────────────────────────────────────────────────────────┐
-│                                                             │
-│ STAGE 0: classifier Agent                                   │
-│                                                             │
-└─────────────────────────────────────────────────────────────┘
-INPUT:  Raw Gmail email
-OUTPUT: ClassifiedEmail (is_po flag + rationale)
+## Pipeline Map
 
-Agent: classifier
-Tools:
-- fetch_unread_emails()                    # gmail_tools.fetch_unread_emails
+`src/workflow/workflow.py` keeps looping through unread Gmail messages and spins up a fresh workflow via `create_workflow()` for each pass.
 
-Notes:
-- Agent prompts call this helper once, pick the first unread email, and emit the Pydantic ClassifiedEmail.
-- Original Gmail message id must be preserved so downstream agents can reply.
+<div style="text-align:center;margin:1.5rem 0;">
+<pre style="display:inline-block;text-align:left;padding:1.25rem 1.5rem;border:1px solid #d1d9e6;border-radius:16px;background:#0f172a;color:#e2e8f0;line-height:1.5;font-family:'Fira Code',Menlo,Consolas,monospace;font-size:0.95rem;">
+<span style="color:#38bdf8;">                         +=====================+</span>
+<span style="color:#38bdf8;">                         |     Gmail Inbox     |</span>
+<span style="color:#38bdf8;">                         |     (unread queue)  |</span>
+<span style="color:#38bdf8;">                         +==========+==========+</span>
+<span style="color:#94a3b8;">                                    |</span>
+<span style="color:#cbd5f5;">                        fetch_unread_emails()</span>
+<span style="color:#94a3b8;">                                    |</span>
+<span style="color:#94a3b8;">                                    v</span>
+<span style="color:#c4b5fd;">        +---------------------------+---------------------------+</span>
+<span style="color:#c4b5fd;">        |                        classifier                     |</span>
+<span style="color:#c4b5fd;">        |  emits ClassifiedEmail (is_po flag, email.id saved)   |</span>
+<span style="color:#c4b5fd;">        +-----------+---------------------------+---------------+</span>
+<span style="color:#94a3b8;">                    |                           |</span>
+<span style="color:#fca5a5;">                    | is_po == False            |</span>
+<span style="color:#94a3b8;">                    |                           v</span>
+<span style="color:#fca5a5;">     mark_email_as_read()</span><span style="color:#94a3b8;">              +-------------------------+</span>
+<span style="color:#fca5a5;">          and loop next                </span><span style="color:#34d399;">|         parser          |</span>
+<span style="color:#94a3b8;">                    |                  </span><span style="color:#34d399;">|  ClassifiedEmail.email  |</span>
+<span style="color:#94a3b8;">                    |                  </span><span style="color:#34d399;">|        -> ParsedPO      |</span>
+<span style="color:#94a3b8;">                    |                  </span><span style="color:#34d399;">+-----------+-------------+</span>
+<span style="color:#94a3b8;">                    |                              |</span>
+<span style="color:#94a3b8;">                    |                              v</span>
+<span style="color:#34d399;">                    |                  +-------------------------+</span>
+<span style="color:#34d399;">                    |                  |         resolver        |</span>
+<span style="color:#34d399;">                    |                  | ParsedPO + check_credit |</span>
+<span style="color:#34d399;">                    |                  |        -> ResolvedPO    |</span>
+<span style="color:#34d399;">                    |                  +-----------+-------------+</span>
+<span style="color:#94a3b8;">                    |                              |</span>
+<span style="color:#94a3b8;">                    |                              v</span>
+<span style="color:#facc15;">                    |                  +-------------------------+</span>
+<span style="color:#facc15;">                    |                  |         decider         |</span>
+<span style="color:#facc15;">                    |                  |    ResolvedPO ->        |</span>
+<span style="color:#facc15;">                    |                  | FULFILLABLE / UNFULFILL |</span>
+<span style="color:#facc15;">                    |                  +-----+-----------+-------+</span>
+<span style="color:#94a3b8;">                    |                        |           |</span>
+<span style="color:#94a3b8;">                    |                        |           |</span>
+<span style="color:#34d399;">                    |               FULFILLABLE      </span><span style="color:#f87171;">UNFULFILLABLE</span>
+<span style="color:#94a3b8;">                    |                        |           |</span>
+<span style="color:#94a3b8;">                    |                        v           v</span>
+<span style="color:#22d3ee;">                    |             +----------------+  +----------------+</span>
+<span style="color:#22d3ee;">                    |             |    fulfiller   |  |    rejector    |</span>
+<span style="color:#22d3ee;">                    |             |   (happy path) |  | (unhappy path) |</span>
+<span style="color:#22d3ee;">                    |             +--------+-------+  +--------+-------+</span>
+<span style="color:#94a3b8;">                    |                      |                    |</span>
+<span style="color:#94a3b8;">                    +----------------------+--------------------+</span>
+<span style="color:#94a3b8;">                                           |</span>
+<span style="color:#94a3b8;">                                           v</span>
+<span style="color:#38bdf8;">                         +===============================+</span>
+<span style="color:#38bdf8;">                         | mark_email_as_read() and loop |</span>
+<span style="color:#38bdf8;">                         +===============================+</span>
+</pre>
+</div>
 
-┌─────────────────────────────────────────────────────────────┐
-│                                                             │
-│ STAGE 1: parser Agent                                       │
-│                                                             │
-└─────────────────────────────────────────────────────────────┘
-INPUT:  ClassifiedEmail.email
-OUTPUT: ParsedPO (structured customer + line items)
+## Stage Cheat Sheet
 
-Agent: parser
-Tools:
-- (optional) clean_email_payload()        # ai_function placeholder when normalisation is needed
+| Stage | Agent & file | Input | Output | Core helpers already wired |
+|---|---|---|---|---|
+| 0 | `classifier` (`src/agents/classifier.py`) | Unread Gmail message pulled via `emailing.gmail_tools.fetch_unread_emails()` | `ClassifiedEmail` (`email`, `is_po`, `reason`) | `emailing.gmail_tools.fetch_unread_emails()` |
+| 1 | `parser` (`src/agents/parser.py`) | `ClassifiedEmail.email` | `ParsedPO` (customer profile + line items) | _None registered yet (keep `clean_email_payload` in reserve)_ |
+| 2 | `resolver` (`src/agents/resolver.py`) | `ParsedPO` | `ResolvedPO` (resolved customer, priced items, computed totals) | `agents.resolver.check_credit()` |
+| 3 | `decider` (`src/agents/decider.py`) | `ResolvedPO` | `Decision` (`FULFILLABLE` or `UNFULFILLABLE` + reason + payload) | (LLM only) |
+| 4A | `fulfiller` (`src/agents/fulfiller.py`) | `Decision` where status is `FULFILLABLE` | `FulfillmentResult` (success flag, order id, invoice ref) | `update_inventory`, `update_customer_credit`, `add_order_to_crm`, `generate_invoice`, `send_slack_notification` |
+| 4B | `rejector` (`src/agents/rejector.py`) | `Decision` where status is `UNFULFILLABLE` | `RejectResult` | — |
 
-Behavior:
-- Produces ParsedPO with customer + line_items, leveraging Pydantic validation for required fields.
-- No totals are computed here; computed fields live on ResolvedPO.
+## Key Behaviors
 
-┌─────────────────────────────────────────────────────────────┐
-│                                                             │
-│ STAGE 2: resolver Agent (Customer & SKU Resolution)          │
-│                                                             │
-└─────────────────────────────────────────────────────────────┘
-INPUT:  ParsedPO
-OUTPUT: ResolvedPO
+- The classifier must call `fetch_unread_emails()` exactly once and preserve the Gmail `id`; everything downstream relies on it.
+- Parser focuses on structure only; resolver is the first place you enrich with search, pricing, and credit signals.
+- Resolver totals (`subtotal`, `tax`, `shipping`, `order_total`) are computed fields on `ResolvedPO`, so later agents do not recalc.
+- Decider routes based on availability and credit; the workflow edges mirror `should_fulfill()` and `should_reject()` in `src/workflow/workflow.py`.
 
-Agent: resolver
-Tools (callable via ai_functions or simple wrappers):
-- search_customers(query)                 # azure_search_tools.search_customers
-- search_products(query)                  # azure_search_tools.search_products
-- create_customer(...)                    # crm.airtable_tools.create_customer
-- check_credit(customer_name, order_total)
+## Runtime Anchors
 
-Process:
-2.1 Customer Resolution
-    a. Query Azure Search with ParsedPO customer hints.
-    b. If no confident hit: create_customer(...) and trigger background re-ingestion of the Customers index.
-    c. Carry the chosen/created customer_id + contact metadata into ResolvedPO.
+- `src/workflow/workflow.py:create_workflow()` wires `WorkflowBuilder` with the conditional edges shown above.
+- `src/workflow/workflow.py:run_till_mail_read()` drives the polling loop and calls `emailing.gmail_tools.mark_email_as_read()` after each pass.
 
-2.2 Product Resolution
-    For each ParsedPO.line_items entry:
-    - search_products(line.product_name) for candidate SKUs.
-    - Select best match with sufficient inventory.
-    - Populate ResolvedItem (sku, title, price, qtyAvailable, ordered_qty, etc).
-    - Set product_availability flag from qtyAvailable vs ordered_qty.
+## Helper Library (wire up when ready)
 
-2.3 Credit Check
-    - Use ResolvedPO.computed subtotal/tax/shipping/order_total (Pydantic computed fields) to call check_credit().
-    - Set customer_credit_ok boolean from the tool response.
-
-┌─────────────────────────────────────────────────────────────┐
-│                                                             │
-│ STAGE 3: decider Agent                                      │
-│                                                             │
-└─────────────────────────────────────────────────────────────┘
-INPUT:  ResolvedPO
-OUTPUT: Decision (FULFILLABLE / UNFULFILLABLE)
-
-Agent: decider
-Tools: None (LLM evaluates resolved payload)
-
-Decision criteria (implemented in prompt):
-- customer_credit_ok == True
-- All ResolvedItem.product_availability == True
-- Resolver supplied confident matches (include Azure Search scores in payload if available)
-- Reason field explains the verdict.
-
-Routing:
-- FULFILLABLE  → Stage 4A (fulfiller)
-- UNFULFILLABLE → Stage 4B (rejector)
-
-┌─────────────────────────────────────────────────────────────┐
-│                                                             │
-│ STAGE 4A: fulfiller Agent (Happy Path)                      │
-│                                                             │
-└─────────────────────────────────────────────────────────────┘
-Agent: fulfiller
-Tools executed in order:
-1. update_inventory(order_lines)          # decrement stock (currently queues work)
-2. update_customer_credit(customer_id, order_total)
-3. generate_invoice(resolved_po)          # wraps invoice_tools.generate_invoice_pdf_url
-4. add_order_to_crm(resolved_po, invoice_pdf_url)
-5. respond_confirmation_email(message_id, pdf_url)   # gmail_tools.respond_confirmation_email
-6. send_slack_notification(resolved_po, order_id, invoice_url)
-
-Operational Notes:
-- ResolvedPO already supplies subtotal/tax/shipping/order_total via computed fields; no new math functions needed.
-- respond_confirmation_email expects the original Gmail message_id kept from Stage 0.
-- update_* helpers return ack payloads; integrate with actual services or job queues later.
-
-┌─────────────────────────────────────────────────────────────┐
-│                                                             │
-│ STAGE 4B: rejector Agent (Unhappy Path)                     │
-│                                                             │
-└─────────────────────────────────────────────────────────────┘
-Agent: rejector
-Tools:
-- respond_unfulfillable_email(message_id, reason)   # gmail_tools.respond_unfulfillable_email
-- send_slack_notification(...)                      # optional ops alert
-
-Flow:
-- Identify root cause (credit exceeded, out of stock, product not found, low confidence).
-- Draft polite reply with next steps and send via Gmail reply helper.
-- Optionally notify Slack with the rejection context.
-
-```
-
-Entry Points
-------------
-- `agents.create_workflow()` wires the DAG with conditional edges.
-- `agents.run_till_mail_read()` polls Gmail, feeds each unread email through the workflow, and marks it read.
-
-Implementation Notes
---------------------
-- Pydantic models (`Email`, `ParsedPO`, `ResolvedPO`, `Decision`, etc.) enforce structure and compute totals, keeping auxiliary helpers minimal.
-- Azure Search schemas and Airtable sync jobs must be run before the agents to ensure fresh indexes.
-- When a new customer is created, schedule a follow-up ingestion (step 3 or 4 in setup) so future searches resolve immediately.
+- `emailing.gmail_tools.respond_confirmation_email()` — compose and send the happy-path reply (make it a tool for `fulfiller` when messaging is ready).
+- `emailing.gmail_tools.respond_unfulfillable_email()` — notify customers about rejects.
+- `agents.fulfiller.send_slack_notification()` — Slack notifier used by the fulfiller (fulfilled orders only).
