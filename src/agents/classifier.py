@@ -1,0 +1,43 @@
+from typing import Annotated
+
+from agent_framework import ChatAgent
+from pydantic import BaseModel, ConfigDict, Field
+
+from emailing.gmail_tools import fetch_unread_emails
+
+from agents.base import chat_client
+
+
+class Email(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: Annotated[str, Field(description="Gmail message ID for this email")]
+    subject: Annotated[str, Field(description="Email subject line as received")]
+    sender: Annotated[str, Field(description="Email address of the sender")]
+    body: Annotated[str, Field(
+        description="Plaintext body content of the email")]
+
+
+class ClassifiedEmail(BaseModel):
+    email: Annotated[Email, Field(
+        description="The email instance being evaluated")]
+    is_po: Annotated[bool, Field(
+        description="True if the email is classified as a purchase order")]
+    reason: Annotated[str, Field(
+        description="Brief classifier rationale supporting the decision")]
+
+
+classifier = ChatAgent(
+    chat_client=chat_client,
+    name="classifier",
+    instructions=(
+        "You are the inbox triage specialist. Call `gmail_grabber()` exactly once to fetch unread Gmail messages. "
+        "Select the first unread message returned and decide if it is a purchase order. "
+        "Return a ClassifiedEmail JSON matching the response schema, embedding the chosen email under `email`. "
+        "If the message is not a purchase order, set `is_po` to false and explain briefly in `reason`. "
+        "Output only the JSON object—no additional prose."
+    ),
+    tools=[
+        fetch_unread_emails,
+    ],
+    response_format=ClassifiedEmail,
+)
