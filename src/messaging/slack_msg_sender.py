@@ -19,7 +19,6 @@ def post_slack_message(
     invoice_url: str | None = None,  # Optional link to the generated invoice
     order_url: str | None = None,  # Optional link to the order record
 ) -> None:
-    
     """Post a Slack Block Kit message populated with the supplied order data.
     Args:
         fields: Key/value pairs summarizing the order (e.g., Order ID, Customer).
@@ -33,50 +32,59 @@ def post_slack_message(
     Raises:
         ValueError: If required parameters are missing or invalid.
     """
-    
+
     # ----------------------------------------------------------------------
     # -------------------- Validate required parameters --------------------
     # ----------------------------------------------------------------------
     if not fields:
-        raise ValueError("fields must contain at least one entry.")  # Guard against missing summary content
+        # Guard against missing summary content
+        raise ValueError("fields must contain at least one entry.")
     if not order_items:
-        raise ValueError("order_items must contain at least one entry.")  # Guard against empty item list
+        # Guard against empty item list
+        raise ValueError("order_items must contain at least one entry.")
 
     field_blocks = [
-        {"type": "mrkdwn", "text": f"*{label}:*\n{value}"}  # Render each key/value pair as a Slack field
+        # Render each key/value pair as a Slack field
+        {"type": "mrkdwn", "text": f"*{label}:*\n{value}"}
         for label, value in fields.items()
     ]
 
-    order_items_text = "\n".join(f"• {item}" for item in order_items)  # Format items as Slack-friendly bullets
-
+    # Format items as Slack-friendly bullets
+    order_items_text = "\n".join(f"• {item}" for item in order_items)
 
     # ----------------------------------------------------------------------
     # --------------- Build optional context and action blocks -------------
     # ----------------------------------------------------------------------
 
     context_parts: list[str] = []  # Collect optional context statements
-   
+
     if processed_seconds is not None:
-        context_parts.append(f"⏱️ Processed in {processed_seconds:.1f} seconds")  # Surface processing latency
-   
+        # Surface processing latency
+        context_parts.append(
+            f"⏱️ Processed in {processed_seconds:.1f} seconds")
+
     if notification_email:
-        context_parts.append(f"📧 Email sent to {notification_email}")  # Note who received the outbound email
-   
+        # Note who received the outbound email
+        context_parts.append(f"📧 Email sent to {notification_email}")
+
     if agent_name:
-        context_parts.append(f"🤖 Agent: {agent_name}")  # Credit the automation agent
-   
+        # Credit the automation agent
+        context_parts.append(f"🤖 Agent: {agent_name}")
+
     context_block = (
         {
             "type": "context",
-            "elements": [{"type": "mrkdwn", "text": " | ".join(context_parts)}],  # Combine context snippets
+            # Combine context snippets
+            "elements": [{"type": "mrkdwn", "text": " | ".join(context_parts)}],
         }
         if context_parts
         else None  # Skip the context block if no metadata was provided
     )
 
     # Build action buttons for invoice and order links
-    action_elements: list[dict[str, object]] = []  # Build button set when links are available
-    
+    # Build button set when links are available
+    action_elements: list[dict[str, object]] = []
+
     if invoice_url:
         action_elements.append(
             {
@@ -86,7 +94,7 @@ def post_slack_message(
                 "url": invoice_url,  # Deep link to the invoice document
             }
         )
-    
+
     if order_url:
         action_elements.append(
             {
@@ -96,41 +104,53 @@ def post_slack_message(
             }
         )
     action_block = (
-        {"type": "actions", "elements": action_elements} if action_elements else None  # Slack requires non-empty actions
+        # Slack requires non-empty actions
+        {"type": "actions", "elements": action_elements} if action_elements else None
     )
-
 
     # ----------------------------------------------------------------------
     # ----------------------- Assemble and send message ---------------------
     # ----------------------------------------------------------------------
-    
+
     blocks: list[dict[str, object]] = [
         {
             "type": "header",
-            "text": {"type": "plain_text", "text": "📬 New Purchase Order Processed", "emoji": True},  # Main title
+            # Main title
+            "text": {"type": "plain_text", "text": "📬 New Purchase Order Processed", "emoji": True},
         },
         {
             "type": "section",
-            "text": {"type": "mrkdwn", "text": "A new order has been successfully processed and invoiced."},  # Intro summary
+            # Intro summary
+            "text": {"type": "mrkdwn", "text": "A new order has been successfully processed and invoiced."},
         },
         {"type": "divider"},
         {"type": "section", "fields": field_blocks},  # Summary metrics section
         {"type": "divider"},
         {
             "type": "section",
-            "text": {"type": "mrkdwn", "text": f"*Order Items:*\n{order_items_text}"},  # Itemized detail section
+            # Itemized detail section
+            "text": {"type": "mrkdwn", "text": f"*Order Items:*\n{order_items_text}"},
         },
     ]
 
     if context_block:
-        blocks.extend([{"type": "divider"}, context_block])  # Append optional context
-  
-    if action_block:
-        blocks.extend([{"type": "divider"}, action_block])  # Append optional calls-to-action
+        # Append optional context
+        blocks.extend([{"type": "divider"}, context_block])
 
+    if action_block:
+        # Append optional calls-to-action
+        blocks.extend([{"type": "divider"}, action_block])
 
     message = {"blocks": blocks}  # Final payload for Slack
-    webhook = os.getenv("SLACK_WEBHOOK_URL")  # Resolve webhook with override support
-    response = requests.post(webhook, json=message, timeout=10)  # Call Slack webhook with a conservative timeout
 
-    print(f"Message sent! Status: {response.status_code}")  # Log a simple status for operational visibility
+    # Resolve webhook with override support
+    webhook = os.getenv("SLACK_WEBHOOK_URL")
+
+    if not webhook:
+        raise ValueError("SLACK_WEBHOOK_URL environment variable is not set.")
+
+    # Call Slack webhook with a conservative timeout
+    response = requests.post(webhook, json=message, timeout=10)
+
+    # Log a simple status for operational visibility
+    print(f"Message sent! Status: {response.status_code}")
