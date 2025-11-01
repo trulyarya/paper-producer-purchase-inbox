@@ -22,6 +22,22 @@ SCOPES = [
     "https://www.googleapis.com/auth/gmail.send",
 ]
 
+# Resolve credential paths relative to the project root so execution works
+# no matter which directory the process is started from.
+
+# This translates to 'src/' cuz we're in 'src/emailing/' & parents[2] goes up
+# two levels which is the same as parent.parent
+BASE_DIR = Path(__file__).resolve().parents[2]
+
+# This translates to 'src/emailing/cred' for the credentials directory
+CREDENTIALS_DIR = BASE_DIR / "cred"
+
+# This translates to 'src/emailing/cred/token.json' for the token file
+TOKEN_PATH = CREDENTIALS_DIR / "token.json"
+
+# This translates to 'src/emailing/cred/credentials.json' for client secrets file
+CLIENT_SECRETS_PATH = CREDENTIALS_DIR / "credentials.json"
+
 
 def _authenticate_gmail() -> Any:
     """
@@ -34,19 +50,27 @@ def _authenticate_gmail() -> Any:
         Exception: If authentication fails.
     """
     # Load saved credentials
-    creds = Credentials.from_authorized_user_file(
-        Path("./cred/token.json"),
-        SCOPES,
-    ) if Path("./cred/token.json").exists() else None
+    creds = (
+        Credentials.from_authorized_user_file(
+            str(TOKEN_PATH),
+            SCOPES,
+        )
+        if TOKEN_PATH.exists()
+        else None
+    )
 
     if not creds or not creds.valid:  # Check if credentials are valid
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())  # Refresh expired credentials
         else:  # Perform initial OAuth2 flow
             creds = InstalledAppFlow.from_client_secrets_file(
-                Path("./cred/credentials.json"), SCOPES).run_local_server(port=0)
+                str(CLIENT_SECRETS_PATH),
+                SCOPES,
+            ).run_local_server(port=0)
+
         # Save credentials for future use
-        open(Path("./cred/token.json"), "w").write(creds.to_json())
+        CREDENTIALS_DIR.mkdir(parents=True, exist_ok=True)
+        TOKEN_PATH.write_text(creds.to_json())
 
     # Build and return Gmail API service
     return build("gmail", "v1", credentials=creds)
@@ -66,11 +90,16 @@ def _load_reply_context(message_id: str) -> tuple[Any, dict[str, str], str]:
         raise ValueError("A Gmail message_id is required to send a reply.")
 
     service = _authenticate_gmail()
-    original = service.users().messages().get(
-        userId="me",
-        id=message_id,
-        format="full",
-    ).execute()
+    original = (
+        service.users()
+        .messages()
+        .get(
+            userId="me",
+            id=message_id,
+            format="full",
+        )
+        .execute()
+    )
 
     headers = {h["name"]: h["value"] for h in original["payload"]["headers"]}
 
@@ -103,10 +132,15 @@ def _send_reply(
 
     encoded_message = base64.urlsafe_b64encode(msg.as_bytes()).decode()
 
-    result = service.users().messages().send(
-        userId="me",
-        body={"raw": encoded_message, "threadId": thread_id},
-    ).execute()
+    result = (
+        service.users()
+        .messages()
+        .send(
+            userId="me",
+            body={"raw": encoded_message, "threadId": thread_id},
+        )
+        .execute()
+    )
 
     return {"id": result["id"], "status": "sent"}
 
@@ -145,28 +179,35 @@ def fetch_unread_emails(gmail_service: Any | None = None) -> list[dict]:
 
     # Ensure Gmail connection is established
     if gmail_service is None:
-        raise ValueError(
-            "Gmail service instance is required. Cannot authenticate."
-        )
+        raise ValueError("Gmail service instance is required. Cannot authenticate.")
 
     # Query for unread emails
-    messages = gmail_service.users().messages().list(
-        userId="me",  # 'me' refers to the authenticated user
-        q="is:unread",  # Gmail search query for unread emails
-        maxResults=1,  # Limit to last 1 unread email
-    ).execute().get("messages", [],)  # Get list of messages from the response
+    messages = (
+        gmail_service.users()
+        .messages()
+        .list(
+            userId="me",  # 'me' refers to the authenticated user
+            q="is:unread",  # Gmail search query for unread emails
+            maxResults=1,  # Limit to last 1 unread email
+        )
+        .execute()
+        .get(
+            "messages",
+            [],
+        )
+    )  # Get list of messages from the response
 
     emails = []
     for msg in messages:
         # Fetch full message details
-        full_message = gmail_service.users().messages().get(
-            userId="me",
-            id=msg["id"],
-            format="full"
-        ).execute()
+        full_message = (
+            gmail_service.users()
+            .messages()
+            .get(userId="me", id=msg["id"], format="full")
+            .execute()
+        )
         # Parse email headers
-        headers = {h["name"]: h["value"]
-                   for h in full_message["payload"]["headers"]}
+        headers = {h["name"]: h["value"] for h in full_message["payload"]["headers"]}
 
         # Extract all body content
         body = _extract_body(full_message["payload"])
@@ -238,13 +279,13 @@ def respond_confirmation_email(
 
 def respond_unfulfillable_email(
     message_id: str,
-    reason: str | None = None,
+    reason: str,
 ) -> dict[str, str]:
     """Send an unfulfillable order reply that includes a rejection reason.
 
     Args:
         message_id: The Gmail message ID to reply to.
-        reason: Optional reason for rejecting the order.
+        reason: Reason for rejecting the order.
     Returns:
         A dictionary with the sent message ID and status.
     """
@@ -268,6 +309,7 @@ def respond_unfulfillable_email(
 # ---------------------------------------#
 # ------------ Main function ------------#
 # ---------------------------------------#
+
 
 def main() -> None:
     """
