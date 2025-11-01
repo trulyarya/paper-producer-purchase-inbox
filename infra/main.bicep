@@ -40,9 +40,24 @@ var uniqueSuffix = uniqueString(resourceGroup().id) // Generates a unique hash f
 var resourcePrefix = '${projectName}-${environmentName}' // Combines project name and environment (e.g., "paperco-dev")
 
 // Built-in Azure role definition IDs (these are constant across all Azure subscriptions)
-// This is for "Storage Blob Data Contributor" and a globally constant GUID that's the same across ALL Azure subscriptions.
 // visit https://learn.microsoft.com/en-us/azure/role-based-access-control/built-in-roles for more info on built-in roles & GUIDs.
 var storageBlobDataContributorRoleId = 'ba92f5b4-2d11-453d-a403-e96b0029c9fe' // Allows read/write/delete access to blob containers & data
+var azureAIUserRoleId = 'b24988ac-6180-42a0-ab88-20f7382dd24c' // Azure AI User role (for AI Search to call AI Foundry/OpenAI)
+
+// ----------------------------------------------------------------------------
+// ROLE ASSIGNMENT: Grant AI Search identity access to AI Foundry (OpenAI) account
+// ----------------------------------------------------------------------------
+
+resource searchToAIAccountRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  // Use uniqueString for deterministic, valid name (principalId not available at compile time)
+  name: uniqueString(aiAccount.id, searchService.id, azureAIUserRoleId)
+  scope: aiAccount
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', azureAIUserRoleId)
+    principalId: searchService.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
 
 // Resource names
 var storageAccountName = toLower(replace('${projectName}${environmentName}${take(uniqueSuffix, 8)}', '-', '')) // Storage names: lowercase, no hyphens, max 24 chars
@@ -246,19 +261,24 @@ resource textEmbedding3Large 'Microsoft.CognitiveServices/accounts/deployments@2
 // MODULE 4: Azure AI Search (for SKU vector search)
 // ----------------------------------------------------------------------------
 
-resource searchService 'Microsoft.Search/searchServices@2025-05-01' = { // Azure AI Search service
-  name: searchServiceName // Service name (must be globally unique)
-  location: location // Azure region
-  tags: commonTags // Standard tags
-  sku: { // Pricing tier
-    name: 'free' // Free tier (supports vector search and hybrid search, up to 50MB/10k docs)
+// Azure AI Search service resource
+resource searchService 'Microsoft.Search/searchServices@2025-05-01' = {
+  name: searchServiceName
+  location: location
+  tags: commonTags
+  sku: {
+    name: 'free'
+  }
+  identity: {
+    type: 'SystemAssigned' // Managed identity for secure access to other resources (embedding)
   }
   properties: { // Search service configuration
     replicaCount: 1 // Number of replicas for high availability (1 = single instance)
     partitionCount: 1 // Number of partitions for data storage (1 = up to 50MB storage on free tier)
     hostingMode: 'default' // Hosting mode ('default' vs 'highDensity' for many small indexes)
     publicNetworkAccess: 'enabled' // Allow access from internet
-    // semanticSearch removed - not needed for hybrid (vector + keyword) search
+    disableLocalAuth: true // Require role-based access control (no API keys)
+    semanticSearch: 'standard' // Enable semantic search capabilities (valid values: 'standard', 'none', or null)
   }
 }
 
@@ -266,7 +286,8 @@ resource searchService 'Microsoft.Search/searchServices@2025-05-01' = { // Azure
 // MODULE 5: Container Apps Environment (for hosting FastAPI app)
 // ----------------------------------------------------------------------------
 
-resource containerAppEnvironment 'Microsoft.App/managedEnvironments@2025-01-01' = { // Container Apps Environment (hosting platform)
+// Container Apps Environment (hosting platform)
+resource containerAppEnvironment 'Microsoft.App/managedEnvironments@2025-01-01' = {
   name: containerAppEnvName // Environment name
   location: location // Azure region
   tags: commonTags // Standard tags
@@ -287,6 +308,9 @@ resource containerAppEnvironment 'Microsoft.App/managedEnvironments@2025-01-01' 
 
 @description('The endpoint URL for Azure OpenAI') // API endpoint for making OpenAI calls
 output openAiEndpoint string = aiAccount.properties.endpoint // Example: https://yourname-openai.openai.azure.com/
+
+@description('The principalId of the Azure AI Search system-assigned managed identity (for role assignment)')
+output searchServicePrincipalId string = searchService.identity.principalId
 
 @description('The name of the Azure OpenAI account') // Account name for reference
 output openAiName string = aiAccount.name // Used to retrieve API keys later
@@ -311,3 +335,4 @@ output appInsightsConnectionString string = appInsights.properties.ConnectionStr
 
 @description('Resource group name') // The resource group containing all resources
 output resourceGroupName string = resourceGroup().name // Useful for scripting and automation
+
