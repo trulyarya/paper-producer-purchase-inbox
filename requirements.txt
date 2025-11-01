@@ -3,8 +3,8 @@ python-dotenv # For environment variable management
 beautifulsoup4 # For HTML parsing
 pydantic # For data validation
 slack-sdk # For Slack integration
-weasyprint # For PDF generation from HTML
 jinja2 # For rendering HTML templates
+weasyprint # HTML-to-PDF conversion
 
 # Google API client libraries for Gmail
 google-auth-oauthlib
