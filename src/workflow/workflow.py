@@ -9,8 +9,10 @@ PROJECT_SRC = Path(__file__).resolve().parents[1]
 if str(PROJECT_SRC) not in sys.path:
     sys.path.insert(0, str(PROJECT_SRC))
 
-from agent_framework import WorkflowBuilder, ChatMessage
 from agent_framework.devui import serve
+
+from agent_framework import WorkflowBuilder
+
 from agents import (
     classifier,
     decider,
@@ -104,6 +106,11 @@ async def run_till_mail_read():
     print("[WORKFLOW] ✓ All unread messages processed")
 
 
-if __name__ == "__main__":
-    asyncio.run(run_till_mail_read())
-    # serve([workflow], auto_open=True)
+
+
+# if __name__ == "__main__":
+#     asyncio.run(run_till_mail_read())
+#
+#     # Start the DevUI to visualize the workflow:
+#     from agent_framework.devui import serve  
+#     serve([workflow], auto_open=True)
