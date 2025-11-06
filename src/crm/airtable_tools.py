@@ -9,7 +9,7 @@ from datetime import datetime
 import requests
 from typing import Any
 from dotenv import load_dotenv
-from sqlalchemy import all_
+from agent_framework import ai_function
 
 # ============================================================================
 # ENVIRONMENT CONFIGURATION
@@ -139,20 +139,15 @@ def get_all_customers() -> list[dict[str, Any]]:
 # WRITE OPERATIONS (create new records)
 # ============================================================================
 
+@ai_function
 def add_new_customer(
         customer_name: str,
         customer_email: str,
         customer_address: str,
-) -> None:
-    """Creates new customer in Airtable when not found in AI Search in Airtable.
-    
-    Args:
-        customer_name: Full name of the customer
-        customer_email: Email address of the customer
-        customer_address: Billing/shipping address of the customer
-    Returns:
-        None
-    """
+) -> dict[str, Any]:
+    """Creates a new customer in Airtable when the agent can't find one.
+
+    Returns a short status payload so the agent can log the outcome."""
 
     all_customers = _fetch_all_records(AIRTABLE_CUSTOMERS_TABLE)
     # columns: Customer ID, Name, Email, Billing Address, Shipping Address,
@@ -178,38 +173,41 @@ def add_new_customer(
         "Status": "Active"
     }
 
-    _create_record(AIRTABLE_CUSTOMERS_TABLE, fields)
+    created = _create_record(AIRTABLE_CUSTOMERS_TABLE, fields)
+
+    return {
+        "status": "created",
+        "customer_id": new_id,
+        "record_id": created.get("id"),
+    }
 
 
+@ai_function
 def update_inventory(
         ordered_qty: int,
         product_sku: str,
-) -> None:
-    """Updates customer's inventory and backorder in Airtable.
-
-    Args:
-        ordered_qty: Quantity of product ordered
-        product_sku: SKU of the product to update
-    """
+) -> dict[str, Any]:
+    """Knock units off inventory for a SKU and report the new quantity."""
     all_products = _fetch_all_records(AIRTABLE_PRODUCTS_TABLE)
     # columns: SKU, Title, Description, UOM, Unit Price, Qty Available,
     #          Active, Attributes JSON, Last Updated
 
-    record_id: str = ""  # Initialize record_id
-    new_inventory: int = 0  # Initialize new_inventory
-    
+    record_id: str | None = None
+    new_inventory: int = 0
+
     for product in all_products:
-        if product["fields"].get("SKU") == product_sku:
-            record_id = product["id"]  # Capture the Airtable record ID
-            # Deduct ordered qty from stock
-            new_inventory: int = product["fields"].get(
-                "Qty Available",
-                0
-            ) - ordered_qty
-        else:
-            raise ValueError(
-                f"Product with SKU '{product_sku}' not found in Airtable"
-            )
+        if product["fields"].get("SKU") != product_sku:
+            continue
+
+        record_id = product["id"]  # Capture the Airtable record ID
+        current_qty = product["fields"].get("Qty Available", 0)
+        new_inventory = current_qty - ordered_qty
+        break
+
+    if not record_id:
+        raise ValueError(
+            f"Product with SKU '{product_sku}' not found in Airtable"
+        )
 
     fields = {
         "Qty Available": new_inventory,
@@ -218,68 +216,52 @@ def update_inventory(
 
     _update_record(AIRTABLE_PRODUCTS_TABLE, record_id, fields)
 
+    return {
+        "status": "updated",
+        "sku": product_sku,
+        "qty_available": new_inventory,
+    }
 
+
+@ai_function
 def update_customer_credit(
         customer_id: str,
         order_amount: float,
-) -> float:
-    """Updates customer's open accounts receivable (AR) in Airtable.
-
-    Args:
-        customer_id: Customer ID to update (e.g., "C-5001")
-        new_open_ar: New open AR amount to set
-    Returns:
-        updated_available_credit: float
-    """
+) -> dict[str, float]:
+    """Increase a customer's open AR and report back the remaining credit."""
     all_customers = _fetch_all_records(AIRTABLE_CUSTOMERS_TABLE)
     # columns: Customer ID, Name, Email, Billing Address, Shipping Address,
     #          Credit Limit, Open AR, Currency, Status
 
-    updated_available_credit = 0.  # Initialize available credit
+    updated_available_credit = 0.0
+    record_id: str | None = None
 
     for customer in all_customers:
-        if customer["fields"].get("Customer ID") == customer_id:
-            order_amount = customer["fields"].get("Open AR", 0.0) + order_amount
-            updated_available_credit: float = customer["fields"].get(
-                "Credit Limit",
-                0.0
-            ) - order_amount
-        else:
-            raise ValueError(
-                f"Customer with ID '{customer_id}' not found in Airtable"
-            )
+        if customer["fields"].get("Customer ID") != customer_id:
+            continue
+
+        record_id = customer["id"]
+        open_ar = customer["fields"].get("Open AR", 0.0) + order_amount
+        credit_limit = customer["fields"].get("Credit Limit", 0.0)
+        updated_available_credit = credit_limit - open_ar
+        order_amount = open_ar  # re-use the parameter to hold the new Open AR value
+        break
+
+    if not record_id:
+        raise ValueError(
+            f"Customer with ID '{customer_id}' not found in Airtable"
+        )
 
     fields = {
         "Open AR": order_amount,
     }
 
     # First, update Open AR field in the record of the customer
-    _update_record(AIRTABLE_CUSTOMERS_TABLE, customer_id, fields)
+    _update_record(AIRTABLE_CUSTOMERS_TABLE, record_id, fields)
 
-    # Then, return updated available credit which is `credit limit - open AR`
-    return updated_available_credit
+    # Report the new credit exposure back to the caller.
+    return {
+        "open_ar": order_amount,
+        "available_credit": updated_available_credit,
+    }
 
-
-
-# ============================================================================
-# DIRECT LOOKUP FUNCTIONS (rarely used - prefer AI Search)
-# ============================================================================
-
-# def get_product_by_sku(sku: str) -> Optional[dict[str, Any]]:
-#     """Direct Airtable lookup by SKU. Use only for validation, not search."""
-#     url = f"{AIRTABLE_API_URL}/{AIRTABLE_PRODUCTS_TABLE}"
-#     params = {"filterByFormula": f"{{SKU}}='{sku}'"}
-#     response = requests.get(url, headers=_get_headers(), params=params)
-#     response.raise_for_status()
-#     records = response.json().get("records", [])
-#     return records[0] if records else None
-
-
-# def get_customer_by_id(customer_id: str) -> Optional[dict[str, Any]]:
-#     """Direct Airtable lookup by customer ID. Use only for validation, not search."""
-#     url = f"{AIRTABLE_API_URL}/{AIRTABLE_CUSTOMERS_TABLE}"
-#     params = {"filterByFormula": f"{{'Customer ID'}}='{customer_id}'"}
-#     response = requests.get(url, headers=_get_headers(), params=params)
-#     response.raise_for_status()
-#     records = response.json().get("records", [])
-#     return records[0] if records else None
