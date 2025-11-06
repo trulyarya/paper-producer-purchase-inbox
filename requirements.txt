@@ -18,3 +18,4 @@ azure-ai-projects
 agent-framework
 azure-storage-blob
 azure-search-documents
+azure-ai-contentsafety
