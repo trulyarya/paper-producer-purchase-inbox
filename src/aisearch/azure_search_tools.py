@@ -20,6 +20,9 @@ from dotenv import load_dotenv
 # Import Airtable data access functions
 from crm.airtable_tools import get_all_products, get_all_customers
 
+# Agent framework decorator, for AI function registration
+from agent_framework import ai_function
+
 # Azure SDK imports
 from azure.identity import DefaultAzureCredential  # Managed identity auth
 
@@ -423,8 +426,8 @@ def _upload_documents_to_index(
     result = search_client.upload_documents(documents=documents)  # Batch upload
     print(f"✓ Uploaded {len(result)} documents to '{index_name}'")
 
-
-def ingest_products_from_airtable() -> None:
+@ai_function
+def ingest_products_from_airtable() -> dict[str, Any]:
     """
     Fetches product data from Airtable and uploads to products index.
     Transforms Airtable records into Azure AI Search document format.
@@ -471,9 +474,10 @@ def ingest_products_from_airtable() -> None:
         documents.append(doc)
 
     _upload_documents_to_index(INDEX_NAME_PRODUCTS, documents)  # Batch upload
+    return {"status": "ingested", "index": INDEX_NAME_PRODUCTS, "count": len(documents)}
 
-
-def ingest_customers_from_airtable() -> None:
+@ai_function
+def ingest_customers_from_airtable() -> dict[str, Any]:
     """
     Fetches customer data from Airtable and uploads to customers index.
     Derives segment from credit limit, and addresses.
@@ -511,6 +515,7 @@ def ingest_customers_from_airtable() -> None:
         documents.append(doc)
 
     _upload_documents_to_index(INDEX_NAME_CUSTOMERS, documents)  # Batch upload
+    return {"status": "ingested", "index": INDEX_NAME_CUSTOMERS, "count": len(documents)}
 
 
 # ============================================================================
@@ -578,11 +583,9 @@ def semantic_and_hybrid_search(
     return [dict(result) for result in results]
 
 
-def search_customers(
+def _search_customers(
     query: str,
     top: int = 5,
-    # *,
-    # query_language: str | None = None,
 ) -> list[dict[str, Any]]:
     """Searches customers by name, address, and other details given as a query.
     It uses semantic and hybrid search to find relevant customer records from
@@ -612,12 +615,9 @@ def search_customers(
         semantic_config="customers-semantic-config",
     )
 
-
-def search_products(
+def _search_products(
     query: str,
     top: int = 5,
-    # *,
-    # query_language: str | None = None,
 ) -> list[dict[str, Any]]:
     """Searches the indexed Products by description/specs given as a query.
     It uses hybrid search (keyword + vector) with semantic ranking.
@@ -652,38 +652,42 @@ def search_products(
         semantic_config="products-semantic-config",
     )
 
+# Register search functions as AI functions for agent use
+search_customers = ai_function()(_search_customers)
+search_products = ai_function()(_search_products)
+
 
 # ============================================================================
 # MAIN EXECUTION: Local testing
 # ============================================================================
 if __name__ == "__main__":
-    # print("\n" + "=" * 40 + "\n CREATING INDEX SCHEMAS" + "\n" + "=" * 40 + "\n")
+    print("\n" + "=" * 40 + "\n CREATING INDEX SCHEMAS" + "\n" + "=" * 40 + "\n")
 
-    # create_products_index_schema()
-    # create_customer_index_schema()
+    create_products_index_schema()
+    create_customer_index_schema()
 
-    # print("\n" + "=" * 40 + "\n INGESTING DOCS FROM AIRTABLE" + "\n" + "=" * 40 + "\n")
+    print("\n" + "=" * 40 + "\n INGESTING DOCS FROM AIRTABLE" + "\n" + "=" * 40 + "\n")
       
-    # ingest_products_from_airtable()
-    # ingest_customers_from_airtable()
+    ingest_products_from_airtable()
+    ingest_customers_from_airtable()
 
-    # print("\n" + "=" * 40 + "\n EXAMPLE SEARCHES:" + "\n" + "=" * 40 + "\n")
+    print("\n" + "=" * 40 + "\n EXAMPLE SEARCHES:" + "\n" + "=" * 40 + "\n")
 
     # Example searches to demonstrate functionality
     print("\nProducts:\n")
 
-    for result in search_products("A4 coated gloss 200gsm", top=2):
+    for result in _search_products("A4 coated gloss 200gsm", top=2):
         print(json.dumps(result, indent=4))
 
     print("\nCustomers:\n")
 
-    for result in search_customers("companies whose billing will be sent to Munich", top=2):
+    for result in _search_customers("companies whose billing will be sent to Munich", top=2):
         print(json.dumps(result, indent=4))
 
     print("\n" + "=" * 40 + "\n COMPLETED" + "\n" + "=" * 40 + "\n")
 
 
-    ########### Delete Indexes from Azure AI Search ############
+    ########## Delete Indexes from Azure AI Search ############
     # result = INDEX_CLIENT.delete_index(INDEX_NAME_PRODUCTS)
     # print(result)
     # result = INDEX_CLIENT.delete_index(INDEX_NAME_CUSTOMERS)
