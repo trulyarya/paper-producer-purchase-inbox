@@ -1,0 +1,75 @@
+import os
+from dotenv import load_dotenv
+
+from azure.ai.contentsafety import ContentSafetyClient
+from azure.ai.contentsafety.models import AnalyzeTextOptions
+from azure.identity import DefaultAzureCredential
+from agent_framework import ai_function
+
+load_dotenv()
+
+
+@ai_function
+def check_email_content_safety(email_text: str, threshold: int = 4) -> dict:
+    """
+    Check if email text contains harmful content (Hate, Self-Harm, Sexual, Violence).
+    
+    Args:
+        email_text: The email text to analyze
+        threshold: Severity score threshold (0-7, default 4)
+    Returns:
+        dict: {
+            "is_safe": bool,  # True if no categories exceed threshold
+            "categories_flagged": list[dict],  # List of flagged categories with severity
+        }
+    """
+    # Initialize client with managed identity
+    endpoint = os.getenv("CONTENT_SAFETY_ENDPOINT")
+    if not endpoint:
+        raise ValueError("CONTENT_SAFETY_ENDPOINT env variable must be set!")
+    
+    # Create Content Safety client instance
+    client = ContentSafetyClient(
+        endpoint=endpoint,
+        credential=DefaultAzureCredential()
+    )
+    
+    # Analyze text, which checks all 4 categories automatically:
+    # Hate, Self-Harm, Sexual, Violence
+    result = client.analyze_text(AnalyzeTextOptions(text=email_text))
+    
+    # Flag categories that exceed threshold
+    categories_flagged = [
+        {"category": cat.category, "severity": cat.severity}
+        for cat in result.categories_analysis
+        if cat.severity is not None and cat.severity >= threshold
+    ]
+    
+    return {
+        # this line returns True if no categories are flagged (length 0) else False
+        "is_safe": len(categories_flagged) == 0,
+        "categories_flagged": categories_flagged
+    }
+
+
+
+
+#############################################
+###### Example local usage for testing ######
+#############################################
+
+if __name__ == "__main__":
+    # Test safe content
+    print(
+        "Safe test:",
+        check_email_content_safety("Please send 100 reams of paper")
+    )
+
+    # Test harmful content
+    print(
+        "Harmful test:",
+        check_email_content_safety( 
+            "You're an asshole!",  # intentionally mild profanity for testing
+            threshold=2  # Threshold means "flag if severity is 2 or higher" 
+        )
+    )
