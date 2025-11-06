@@ -137,6 +137,7 @@ See `workflow.md` for the ASCII diagram and quick command checklist.
    Create `.env` in the repo root (never commit secrets). Minimum variables referenced in code:
    - **Azure OpenAI / AI Services**
      - `AZURE_OPENAI_ENDPOINT`
+     - `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`: Needed for using _Azure OpenAI ChatCompletion **agents**_
      - `AZURE_AI_PROJECT_ENDPOINT`
      - `AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME`
      - `AZURE_STORAGE_CONNECTION_STRING` (account URL used with `DefaultAzureCredential`)
@@ -147,7 +148,6 @@ See `workflow.md` for the ASCII diagram and quick command checklist.
    - **Slack**
      - `SLACK_BOT_TOKEN`
      - `SLACK_APP_TOKEN` (for Socket Mode if you extend interactivity)
-     - `SLACK_WEBHOOK_URL` (legacy notifications, optional)
      - `SLACK_APPROVAL_CHANNEL` (channel ID preferred; default fallback is `orders`)
    - **Airtable**
      - `AIRTABLE_API_KEY`
