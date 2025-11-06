@@ -1,5 +1,5 @@
-from typing import Any, Annotated
-from pydantic import BaseModel, ConfigDict, Field, computed_field
+from typing import Annotated
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from agent_framework import ChatAgent, ai_function
 
@@ -9,42 +9,42 @@ from aisearch.azure_search_tools import search_products, search_customers
 
 class RetrievedItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    matched_customer_id: Annotated[
+    customer_id: Annotated[
         str,
         Field(
             description="Resolved customer identifier from CRM (Customers) "
             "through similarity search",
         ),
     ]
-    matched_customer_name: Annotated[
+    customer_name: Annotated[
         str,
         Field(
             description="Resolved customer name from CRM (Customers) "
             "through similarity search",
         ),
     ]
-    matched_customer_address: Annotated[
+    customer_address: Annotated[
         str,
         Field(
             description="Resolved customer address from CRM (Customers) "
             "through similarity search",
         ),
     ]
-    matched_product_sku: Annotated[
+    product_sku: Annotated[
         str,
         Field(
             description="Matched product SKU identifier from catalog (Products) "
             "through similarity search",
         ),
     ]
-    matched_product_name: Annotated[
+    product_name: Annotated[
         str,
         Field(
             description="Matched product name or title from catalog (Products) "
             "through similarity search",
         ),
     ]
-    matched_product_qty_available: Annotated[
+    product_qty_available: Annotated[
         int,
         Field(
             ge=0,
@@ -61,7 +61,7 @@ class RetrievedItem(BaseModel):
             "based on PO email",
         ),
     ]
-    price: Annotated[
+    unit_price: Annotated[
         float,
         Field(
             ge=0,
@@ -76,28 +76,32 @@ class RetrievedItem(BaseModel):
             description="VAT rate (default 19% for Germany)",
         ),
     ]
-    
-    @computed_field
-    @property
-    def product_in_stock(self) -> Annotated[
+    product_in_stock: Annotated[
         bool,
         Field(
+            default=False,
             description="Whether the item is in stock and available: "
-            "only `True` if: `matched_product_qty_available >= ordered_qty` "
+            "only `True` if: `product_qty_available >= ordered_qty` "
             "else: `False`",
         ),
-    ]:
-        return True if self.matched_product_qty_available >= self.ordered_qty else False
-    
-    @computed_field
-    @property
-    def line_item_subtotal(self) -> Annotated[
+    ]
+    subtotal: Annotated[
         float,
         Field(
-            description="Line item subtotal for each SKU (ordered_qty * price)",
+            default=0.0,
+            ge=0,
+            strict=True,
+            description="Line item subtotal for each SKU (ordered_qty * unit_price)",
         ),
-    ]:
-        return self.ordered_qty * self.price
+    ]
+
+    # Compute derived fields after initialization, otherwise the retriever agent may
+    # miss including them in the output, if we use computed_field decorators.
+    @model_validator(mode="after")  # "after" means this runs after the model has been created
+    def _set_computed_fields(self) -> "RetrievedItem":
+        self.product_in_stock = self.product_qty_available >= self.ordered_qty
+        self.subtotal = self.ordered_qty * self.unit_price
+        return self
 
 
 class RetrievedPO(BaseModel):
@@ -120,16 +124,25 @@ class RetrievedPO(BaseModel):
             description="Customer's business or contact name",
         ),
     ]
+    customer_overall_credit_limit: Annotated[
+        float,
+        Field(
+            description="Customer's overall credit limit",
+        ),
+    ]
     customer_open_ar: Annotated[
         float,
         Field(
-            description="Customer's current open accounts receivable amount",
+            description="Customer's current open accounts receivable amount " \
+            "(how much the customer currently owes)",
         ),
     ]
-    customer_credit_limit: Annotated[
+    customer_available_credit: Annotated[
         float,
         Field(
-            description="Customer's credit limit",
+            default=0.0,
+            description="Customer's available credit to fulfill this order "
+            "(customer_overall_credit_limit - customer_open_ar)",
         ),
     ]
     items: Annotated[
@@ -140,92 +153,82 @@ class RetrievedPO(BaseModel):
             description="list of retrieved order line items (products) matched "
             "through similarity search",
         ),
-    ]
-
-    @computed_field
-    @property
-    def customer_available_credit(self) -> Annotated[
+    ]   
+    tax: Annotated[
         float,
         Field(
-            description="Customer's available credit to fulfill this order "
-            "(customer_credit_limit - customer_open_ar)",
-        ),
-    ]:
-        return self.customer_credit_limit - self.customer_open_ar
-    
-    @computed_field
-    @property
-    def tax(self) -> Annotated[
-        float,
-        Field(
+            default=0.0,
             ge=0,
             strict=True,
             description="Calculated sales tax (sum of line subtotal * VAT rate)",
         ),
-    ]:
-        return sum(item.line_item_subtotal * item.vat_rate for item in self.items)
-
-    @computed_field
-    @property
-    def shipping(
-        self,
-    ) -> Annotated[
+    ]
+    shipping: Annotated[
         float,
         Field(
+            default=0.0,
             ge=0,
             strict=True,
-            description="Flat shipping fee (€25 if subtotal > 0)"
+            description="Flat shipping fee (€25 if subtotal > 0)",
         ),
-    ]:
-        return 25.0 if self.subtotal > 0 else 0.0
-
-    @computed_field
-    @property
-    def subtotal(
-        self,
-    ) -> Annotated[
+    ]
+    subtotal: Annotated[
         float,
         Field(
+            default=0.0,
             ge=0,
             strict=True,
             description="Subtotal of all line items before tax and shipping",
         ),
-    ]:
-        return sum(item.line_item_subtotal for item in self.items)
-
-    @computed_field
-    @property
-    def order_total(
-        self,
-    ) -> Annotated[
+    ]
+    order_total: Annotated[
         float,
         Field(
+            default=0.0,
             ge=0,
             strict=True,
-            description="Final total: subtotal + tax + shipping"
+            description="Final total: subtotal + tax + shipping",
         ),
-    ]:
-        return self.subtotal + self.tax + self.shipping
+    ]
+    customer_can_order_with_credit: Annotated[
+        bool,
+        Field(
+            description="Whether the customer can place orders using credit: "
+            "Only 'True' if customer_available_credit >= order_total else 'False'",
+        ),
+    ]
+
+
+    # Compute derived fields after initialization, otherwise the retriever agent may
+    # miss including them in the output, if we use computed_field decorators.
+    @model_validator(mode="after")  # "after" means this runs after the model has been created
+    def _set_totals(self) -> "RetrievedPO":
+        self.customer_available_credit = self.customer_overall_credit_limit - self.customer_open_ar
+        self.tax = sum(item.subtotal * item.vat_rate for item in self.items)
+        self.shipping = 25.0 if sum(item.subtotal for item in self.items) > 0 else 0.0
+        self.subtotal = sum(item.subtotal for item in self.items)
+        self.order_total = self.subtotal + self.tax + self.shipping
+        self.customer_can_order_with_credit = self.customer_available_credit >= self.order_total
+        return self
 
 
 retriever = ChatAgent(
     chat_client=chat_client,
     name="retriever",
     instructions=(
-        "You're helpful and accurate order retriever sub-agent. "
-        "You've been given a ParsedPO JSON representing a parsed purchase order "
-        "from a customer PO email, that includes: customer details and line items.\n\n"
-        "Your task is to resolve and enrich the ParsedPO using Azure AI search "
-        "and the Airtable CRM.\nFor each line item, find the SKU, name, "
-        "unit price, and availability using your tools that search Azure AI "
-        "(using data from Airtable tables).\n\nResolve or create the customer. "
-        "Call check_credit with "
-        "the order total you compute from the resolved line subtotals, VAT, "
-        "and flat shipping (€25 whenever the subtotal is positive). "
-        "Return a RetrievedPO JSON with the customer fields and "
-        "resolved items only; tax, shipping, subtotal, and "
-        "total are computed automatically. The output must conform to the "
-        "defined RetrievedPO schema."
+        "You are an order enrichment specialist. Given a ParsedPO containing customer details and line items, "
+        "your job is to resolve and enrich the data using Azure AI Search tools.\n\n"
+        "Process flow:\n"
+        "1. For the customer: Call search_customers() with the customer company name, email, and address details "
+        "from ParsedPO. Select the best match and extract: customerId, companyName, creditLimit, openAR, and addresses.\n\n"
+        "2. For each line item: Call search_products() with the product SKU and name (title or description) from the ParsedPO. "
+        "Select the best match for each product item and extract: sku, title, unitPrice, qtyAvailable.\n\n"
+        "3. Build the RetrievedPO output object with the exact schema requested as response_format. "
+        "Populate all required fields with the enriched data.\n\n"
+        "Important: Do not calculate totals manually. The schema has @computed_field properties that automatically "
+        "calculate all necessary fields. By providing the required fields, computed fields are derived automatically.\n\n"
+        "If a customer match isn't found (new customer), use placeholder values (e.g., customerId='NEW', creditLimit=0, openAR=0) "
+        "so the decider agent can handle appropriately."
     ),
     tools=[
         search_customers,
