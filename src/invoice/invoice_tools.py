@@ -1,13 +1,17 @@
 """Generate invoice PDFs and upload them to Azure Blob Storage."""
 
+import html
 import os
 import time
 from pathlib import Path
+from typing import Any
+from datetime import datetime
 
 from dotenv import load_dotenv
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from weasyprint import HTML
 
+from agent_framework import ai_function
 from azure.core.exceptions import ResourceExistsError
 from azure.identity import DefaultAzureCredential
 from azure.storage.blob import BlobServiceClient, ContentSettings
@@ -15,13 +19,54 @@ from azure.storage.blob import BlobServiceClient, ContentSettings
 load_dotenv()
 
 
+def transform_retrieved_po_to_invoice_context(retrieved_po: dict) -> dict:
+    """Transform RetrievedPO schema to invoice template format.
+    
+    Maps the agent workflow schema (RetrievedPO) to the structure expected
+    by invoice_template.html Jinja2 template.
+    
+    IMPORTANT: Uses the ACTUAL field names the agent outputs:
+    - product_name, ordered_qty, unit_price, subtotal (NOT the schema-defined names)
+    """
+    items_list = retrieved_po.get("items", [])
+    
+    # Extract customer info from first item or use retrieved_po level fields
+    first_item = items_list[0] if items_list else {}
+    
+    return {
+        "customer": {
+            "company": retrieved_po.get("customer_name", "N/A"),
+            "contact": first_item.get("matched_customer_name", retrieved_po.get("customer_name", "N/A")),
+            "email": "customer@example.com",  # Not in schema, use placeholder
+            "address1": first_item.get("matched_customer_address", "N/A"),
+            "address2": None,
+        },
+        "payment": {
+            "terms": "Net 30",
+            "method": "Bank transfer",
+            "po_number": retrieved_po.get("email_id", "N/A"),
+        },
+        "items": [
+            {
+                "description": item.get("product_name", "Unknown Product"),
+                "qty": item.get("ordered_qty", 0),
+                "unit": "pcs",
+                "unit_price": item.get("unit_price", 0.0),
+                "line_total": item.get("subtotal", 0.0),
+            }
+            for item in items_list
+        ],
+        "totals": {
+            "subtotal": retrieved_po.get("subtotal", 0.0),
+            "tax": retrieved_po.get("tax", 0.0),
+            "shipping": retrieved_po.get("shipping", 0.0),
+            "total": retrieved_po.get("order_total", 0.0),
+        },
+    }
+
+
 def _render_invoice_html(template_path: Path, order_context: dict) -> str:
-    """Render the invoice HTML from a Jinja2 template and order context.
-    Args:
-        template_path: Path to the HTML template file
-        order_context: Context dictionary for rendering the template
-    Returns:
-        The rendered HTML as a string."""
+    """Render the invoice HTML from a Jinja2 template and order context."""
 
     env = Environment(
         loader=FileSystemLoader(str(template_path.parent)),
@@ -37,27 +82,60 @@ def _html_to_pdf_bytes(html_content: str, base_path: Path) -> bytes:
     return pdf_content
 
 
+def _ensure_invoice_metadata(order_context: dict[str, Any]) -> dict[str, Any]:
+    """Return a shallow copy of the order context with the required invoice fields present."""
+
+    context = dict(order_context)
+    invoice_block: dict[str, Any] = dict(context.get("invoice") or {})
+
+    invoice_number = (
+        invoice_block.get("number")
+        or context.get("invoice_no")
+        or context.get("invoice_number")
+        or context.get("order_id")
+        or context.get("po_number")
+        or f"INV-{int(time.time())}"
+    )
+
+    # Default to today's date when issue/due dates are missing.
+    today = datetime.utcnow().date().isoformat()
+    invoice_block.setdefault("number", str(invoice_number))
+    invoice_block.setdefault("issue_date", today)
+    invoice_block.setdefault("due_date", today)
+
+    context["invoice"] = invoice_block
+    return context
+
+@ai_function
 def generate_invoice_pdf_url(
-    html_template: str | Path,
     order_context: dict,
+    html_template: str | Path | None = None,
+    
 ) -> str:
-    """Generate an invoice PDF from an HTML template and upload it to Azure Blob Storage.
+    """Generate an invoice PDF from an HTML template, upload it to Azure 
+    Blob Storage, and return the URL.
+    
     Args:
-        html_template: Path to the HTML template file
-        order_context: Context dictionary for rendering the template
+        order_context: Dictionary containing RetrievedPO invoice data.
+        html_template: Optional path to (another) HTML template file.
     Returns:
-        URL of the uploaded PDF in Azure Blob Storage
-    Raises:
-        FileNotFoundError: If the HTML template file does not exist
-        ValueError: If PDF generation fails or environment variables are not set
+        URL string to the uploaded invoice PDF.
     """
+    
+    html_template = html_template or (
+        Path(__file__).resolve().parent / "invoice_template.html"
+    ) #  .parent means the directory that directly contains this path.
 
     template_path = Path(html_template)
 
     if not template_path.exists():
         raise FileNotFoundError(f"Invoice HTML file not found: {template_path}")
 
-    html_content = _render_invoice_html(template_path, order_context)
+    # Transform RetrievedPO schema to invoice template format
+    transformed_context = transform_retrieved_po_to_invoice_context(order_context)
+    order_context_with_invoice = _ensure_invoice_metadata(transformed_context)
+
+    html_content = _render_invoice_html(template_path, order_context_with_invoice)
     pdf_content = _html_to_pdf_bytes(html_content, template_path.parent.resolve())
 
     storage_account_url = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
@@ -91,7 +169,12 @@ def generate_invoice_pdf_url(
     return blob_client.url
 
 
-# LOCAL TESTING
+    
+
+#################
+# LOCAL TESTING # 
+#################
+
 if __name__ == "__main__":
     sample_template_path = (
         Path(__file__).parent.parent / "invoice" / "invoice_template.html"
@@ -137,5 +220,5 @@ if __name__ == "__main__":
         },
     }
 
-    url = generate_invoice_pdf_url(sample_template_path, sample_order_context)
+    url = generate_invoice_pdf_url(sample_order_context, sample_template_path)
     print(f"Uploaded PDF URL: {url}")
