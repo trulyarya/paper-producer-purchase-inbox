@@ -1,12 +1,10 @@
-from pathlib import Path
-from re import A
 from typing import Any, Annotated
 
 from agent_framework import ChatAgent, ai_function
 from pydantic import BaseModel, ConfigDict, Field
 
 from invoice.invoice_tools import generate_invoice_pdf_url
-from messaging.slack_msg_sender import post_slack_message
+from messaging.slack_approval import post_approval_request, get_approval_from_slack
 
 from agents.base import chat_client
 
@@ -24,89 +22,74 @@ from aisearch.azure_search_tools import (
 )
 
 
-
-# @ai_function
-# def update_inventory(order_lines: list[dict[str, Any]]) -> dict[str, Any]:
-#     """Deduct ordered quantities from inventory."""
-#     return {
-#         "status": "queued",
-#         "lines_processed": len(order_lines),
-#     }
-
-
-# @ai_function
-# def update_customer_credit(customer_id: str, order_total: float) -> dict[str, Any]:
-#     """Adjust customer credit exposure."""
-#     return {
-#         "customer_id": customer_id,
-#         "order_total": order_total,
-#         "status": "queued",
-#     }
-
-
-# @ai_function
-# def add_order_to_crm(
-#     resolved_po: dict[str, Any],
-#     invoice_pdf_url: str | None = None,
-# ) -> dict[str, Any]:
-#     """Persist order details to CRM."""
-#     order_id = f"PO-{resolved_po.get('customer_id', 'UNKNOWN')}-{hash(str(resolved_po)) % 10000:04d}"
-#     return {
-#         "order_id": order_id,
-#         "invoice_url": invoice_pdf_url,
-#         "status": "created",
-#     }
-
-
 @ai_function
-def generate_invoice(resolved_po: dict[str, Any]) -> str:
-    """Generate invoice PDF and return its URL."""
-    # Resolve template relative to this file so execution works from any CWD.
-    # This translates to 'src/invoice/invoice_template.html' for template file
-    html_template = (
-        Path(__file__).resolve().parent.parent / "invoice" / "invoice_template.html"
+def send_confirmation_email_with_approval(
+    message_id: str,
+    invoice_url: str,
+    retrieved_po: dict[str, Any],
+) -> dict[str, str]:
+    """Get human approval via Slack, then send confirmation email if approved.
+    
+    This function BLOCKS execution and waits for a human to approve or deny
+    the order by replying in a Slack thread. If approved, it immediately sends
+    the confirmation email. If denied, it returns denial status without sending.
+    
+    Args:
+        message_id: Gmail message ID to reply to.
+        invoice_url: The generated invoice URL to include in confirmation.
+        retrieved_po: The enriched PO data (required for approval display).
+        
+    Returns:
+        Dictionary with approval status and whether email was sent.
+    """
+    import os
+    
+    # Step 1: Post order to Slack and get thread timestamp
+    print(f"[APPROVAL] Posting order to Slack for human review...")
+    try:
+        thread_ts = post_approval_request(retrieved_po)
+    except Exception as e:
+        return {
+            "status": "error",
+            "reason": f"Failed to post to Slack: {str(e)}",
+            "email_sent": "false",
+        }
+    
+    # Step 2: Block and wait for human approval (polls Slack thread every 2s)
+    print(f"[APPROVAL] Waiting for human response in Slack...")
+    channel = os.getenv("SLACK_APPROVAL_CHANNEL", "orders")  # Channel name WITHOUT #
+    approved = get_approval_from_slack(
+        channel=channel,
+        thread_ts=thread_ts,
+        timeout=60,  # 1 minute for human to respond
     )
-
-    invoice_pdf_url = generate_invoice_pdf_url(
-        html_template=html_template,
-        order_context=resolved_po,
-    )
-
-    return invoice_pdf_url
-
-
-@ai_function
-def send_slack_notification(
-    resolved_po: dict[str, Any],
-    order_id: str,
-    invoice_url: str | None = None,
-) -> dict[str, Any]:
-    """Send a Slack notification to the operations channel with order details."""
-    customer_name = resolved_po.get("customer_name", "Unknown Customer")
-    order_total = resolved_po.get("total", 0.0)
-    items = resolved_po.get("items", [])
-    item_count = len(items)
-    order_items = [
-        f"{item['qty']}x {item['name']} ({item['sku']}) @ €{item['price']:.2f}"
-        for item in items
-    ]
-    fields = {
-        "Customer": customer_name,
-        "Order ID": order_id,
-        "Total": f"€{order_total:.2f}",
-        "Items": str(item_count),
-    }
-    post_slack_message(
-        fields=fields,
-        order_items=order_items,
-        invoice_url=invoice_url,
-        agent_name="PO Automation Agent",
-    )
-    return {
-        "status": "sent",
-        "customer": customer_name,
-        "order_id": order_id,
-    }
+    
+    # Step 3: If approved, send confirmation email immediately
+    if approved:
+        print(f"[APPROVAL] ✓ Approved! Sending confirmation email...")
+        try:
+            respond_confirmation_email(
+                message_id=message_id,
+                pdf_url=invoice_url,
+                retrieved_po=retrieved_po,
+            )
+            return {
+                "status": "approved",
+                "email_sent": "true",
+            }
+        except Exception as e:
+            return {
+                "status": "approved",
+                "email_sent": "false",
+                "reason": f"Approved but email failed: {str(e)}",
+            }
+    else:
+        print(f"[APPROVAL] ✗ Denied! No confirmation email sent.")
+        return {
+            "status": "denied",
+            "email_sent": "false",
+            "reason": "Human denied approval in Slack",
+        }
 
 
 class FulfillmentResult(BaseModel):
@@ -132,46 +115,44 @@ class FulfillmentResult(BaseModel):
 
 
 fulfiller = ChatAgent(
-    chat_client=chat_client,
-    name="fulfiller",
-    instructions=(
-        """You're an order fulfillment sub-agent responsible for processing validated purchase orders.
+     chat_client=chat_client,
+     name="fulfiller",
+     instructions=(
+          """You own the happy-path fulfillment flow for purchase orders marked FULFILLABLE.
 
-You receive a resolved_po dictionary containing customer details, order items, and totals.
+You receive a Decision object whose input_payload is the RetrievedPO.
 
-Execute fulfillment in this sequence:
+Follow this playbook:
+1. Customer setup (if needed):
+   • If customer_id is NEW (or similar), call add_new_customer(...) first.
+   • Call ingest_customers_from_airtable() after adding a new customer.
 
-1. update_inventory(order_lines) - Deduct ordered quantities from inventory stock levels
-2. update_customer_credit(customer_id, order_total) - Adjust customer's credit exposure in CRM
-3. ingest_products_from_airtable() - Sync updated inventory to Azure AI Search indexes
-4. ingest_customers_from_airtable() - Sync updated customer data to Azure AI Search indexes
-5. generate_invoice(resolved_po) - Generate invoice PDF and return its URL
-6. respond_confirmation_email() - Send order confirmation email to customer with invoice attached
-7. send_slack_notification(resolved_po, order_id, invoice_url) - Notify operations team in Slack
+2. Generate invoice:
+   • Call generate_invoice_pdf_url(input_payload) to get the invoice link.
 
-Notes:
-- If customer doesn't exist, call add_new_customer() before processing, then sync with ingest_customers_from_airtable()
-- Steps 3-4 ensure Azure AI Search indexes stay synchronized with CRM changes
-- The generate_invoice() function returns the invoice_pdf_url string
-- Use the invoice URL from step 5 when calling send_slack_notification()
-- Extract order_id from CRM operations or generate from resolved_po data
-- Extract invoice_no from the invoice generation process
+3. Request approval and send confirmation:
+   • Call send_confirmation_email_with_approval(message_id, invoice_url, input_payload).
+   • CRITICAL: Pass the ORIGINAL input_payload (RetrievedPO), NOT any transformed data.
+   • This function will BLOCK and wait for a human to reply 'approve' or 'deny' in Slack.
+   • If approved, it automatically sends the confirmation email.
+   • If denied, it returns without sending.
+   • Check the 'status' field in the response.
 
-Return FulfillmentResult with:
-- ok: true if all steps completed successfully
-- order_id: the CRM order identifier
-- invoice_no: the invoice document reference number
-"""
-    ),
-    tools=[
-        update_inventory,
-        update_customer_credit,
-        add_new_customer,
-        ingest_products_from_airtable,
-        ingest_customers_from_airtable,
-        generate_invoice,
-        respond_confirmation_email,
-        send_slack_notification,
-    ],
-    response_format=FulfillmentResult,
+4. Update systems (only if approved):
+   • Loop over items and call update_inventory(ordered_qty, product_sku).
+   • Call update_customer_credit(customer_id, order_total).
+   • Sync data by calling ingest_products_from_airtable() and ingest_customers_from_airtable().
+
+Always return FulfillmentResult with ok, order_id, and invoice_no."""
+     ),
+     tools=[
+          send_confirmation_email_with_approval,  # Approval + email combined
+          add_new_customer,
+          ingest_customers_from_airtable,
+          generate_invoice_pdf_url,
+          update_inventory,
+          update_customer_credit,
+          ingest_products_from_airtable,
+     ],
+     response_format=FulfillmentResult,
 )
