@@ -5,13 +5,18 @@ Stores credentials in `../cred/token.json` for persistent access.
 """
 
 from email.message import EmailMessage
+from email.utils import parseaddr
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
+
 from bs4 import BeautifulSoup  # For HTML parsing
 import base64  # For decoding email body content
 
+from agent_framework import ai_function
+
+from google.auth.exceptions import RefreshError  # Raised when refresh fails
 from google.auth.transport.requests import Request  # For refreshing tokens
-from google.oauth2.credentials import Credentials  # OAuth2 credentials
+from google.oauth2.credentials import Credentials as OAuthCredentials  # OAuth2 credentials
 from google_auth_oauthlib.flow import InstalledAppFlow  # For OAuth2 flow
 from googleapiclient.discovery import build  # building the Gmail API service
 
@@ -38,42 +43,63 @@ TOKEN_PATH = CREDENTIALS_DIR / "token.json"
 # This translates to 'src/emailing/cred/credentials.json' for client secrets file
 CLIENT_SECRETS_PATH = CREDENTIALS_DIR / "credentials.json"
 
+# Cached authenticated Gmail address
+_ACCOUNT_EMAIL: str | None = None
+
 
 def _authenticate_gmail() -> Any:
-    """
-    Authenticate with Gmail API using OAuth2.
+    """Return an authenticated Gmail API client, refreshing tokens as needed."""
 
-    Returns:
-        authenticated Gmail service instance.
+    creds: OAuthCredentials | None = None
 
-    Raises:
-        Exception: If authentication fails.
-    """
-    # Load saved credentials
-    creds = (
-        Credentials.from_authorized_user_file(
-            str(TOKEN_PATH),
+    if TOKEN_PATH.exists():
+        # Reload cached credentials so we can reuse the stored refresh token.
+        loaded = OAuthCredentials.from_authorized_user_file(str(TOKEN_PATH), SCOPES)
+        if isinstance(loaded, OAuthCredentials):
+            creds = loaded
+
+    if creds and creds.valid:
+        return build("gmail", "v1", credentials=creds)
+
+    if creds and creds.expired and creds.refresh_token:
+        try:
+            creds.refresh(Request())  # Try to breathe new life into the token.
+        except RefreshError:
+            creds = None  # Revoked token: fall through to a clean login.
+
+    if not creds or not creds.valid:
+        # Clear the stale token file before we ask the user to sign in again.
+        if TOKEN_PATH.exists():
+            TOKEN_PATH.unlink()
+
+        flow = InstalledAppFlow.from_client_secrets_file(
+            str(CLIENT_SECRETS_PATH),
             SCOPES,
         )
-        if TOKEN_PATH.exists()
-        else None
-    )
+        creds = cast(OAuthCredentials, flow.run_local_server(port=0))
 
-    if not creds or not creds.valid:  # Check if credentials are valid
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())  # Refresh expired credentials
-        else:  # Perform initial OAuth2 flow
-            creds = InstalledAppFlow.from_client_secrets_file(
-                str(CLIENT_SECRETS_PATH),
-                SCOPES,
-            ).run_local_server(port=0)
+    assert creds is not None  # At this point we must have fresh credentials.
 
-        # Save credentials for future use
-        CREDENTIALS_DIR.mkdir(parents=True, exist_ok=True)
-        TOKEN_PATH.write_text(creds.to_json())
+    # Persist the token so the next run can skip the browser hop.
+    CREDENTIALS_DIR.mkdir(parents=True, exist_ok=True)
+    TOKEN_PATH.write_text(creds.to_json())
 
-    # Build and return Gmail API service
+    # Build and return the Gmail service client instance
     return build("gmail", "v1", credentials=creds)
+
+
+def _get_account_email(service: Any) -> str:
+    """Return the authenticated Gmail address (cached after first lookup)."""
+    global _ACCOUNT_EMAIL
+    if _ACCOUNT_EMAIL:
+        return _ACCOUNT_EMAIL
+
+    profile = service.users().getProfile(userId="me").execute()
+    email_address = profile.get("emailAddress")
+    if not isinstance(email_address, str):
+        email_address = ""
+    _ACCOUNT_EMAIL = email_address.lower()
+    return _ACCOUNT_EMAIL
 
 
 def _load_reply_context(message_id: str) -> tuple[Any, dict[str, str], str]:
@@ -169,6 +195,7 @@ def _extract_body(part: dict) -> str:
     return ""
 
 
+# This is the "standard" non-agent function version (not exposed to the agent framework)
 def fetch_unread_emails(gmail_service: Any | None = None) -> list[dict]:
     """
     Fetch unread emails with full content from Gmail inbox
@@ -197,41 +224,54 @@ def fetch_unread_emails(gmail_service: Any | None = None) -> list[dict]:
         )
     )  # Get list of messages from the response
 
+    account_email = _get_account_email(gmail_service)
     emails = []
     for msg in messages:
-        # Fetch full message details
         full_message = (
-            gmail_service.users()
-            .messages()
-            .get(userId="me", id=msg["id"], format="full")
-            .execute()
+            gmail_service.users().messages().get(
+                userId="me", id=msg["id"], format="full"
+            ).execute()
         )
-        # Parse email headers
         headers = {h["name"]: h["value"] for h in full_message["payload"]["headers"]}
+        sender_email = parseaddr(headers.get("From", ""))[1].lower()
 
-        # Extract all body content
+        if sender_email == account_email:
+            # Ignore the emails we just sent (auto-confirmations, etc.).
+            gmail_service.users().messages().modify(
+                userId="me", id=full_message["id"], body={"removeLabelIds": ["UNREAD"]}
+            ).execute()
+            continue
+
         body = _extract_body(full_message["payload"])
-
-        # Strip HTML and get clean text
         soup = BeautifulSoup(body, "html.parser")
-        body = soup.get_text(separator="\n", strip=True)  # Extract clean text
+        body = soup.get_text(separator="\n", strip=True)
 
         emails.append(
             {
                 "id": full_message["id"],
-                "subject": headers.get("Subject", ""),  # Extract subject line
-                "sender": headers.get("From", ""),  # Extract sender email
-                # Extract preview text
+                "subject": headers.get("Subject", ""),
+                "sender": headers.get("From", ""),
                 "snippet": full_message.get("snippet", ""),
-                "body": body,  # Full email body (cleaned)
+                "body": body,
             }
         )
 
     return emails
 
 
+# This is an AI FUNCTION!
+@ai_function
+def get_unread_emails() -> list[dict]:
+    """Fetch unread emails from Gmail inbox.
+
+    Returns:
+        A list of dictionaries representing unread emails with id, subject,
+        sender, snippet, and body.
+    """
+    return fetch_unread_emails()
+
+
 def mark_email_as_read(message_id: str) -> dict[str, str]:
-    """Remove the UNREAD label from the given Gmail message."""
     service = _authenticate_gmail()
 
     service.users().messages().modify(
@@ -243,73 +283,88 @@ def mark_email_as_read(message_id: str) -> dict[str, str]:
     return {"id": message_id, "status": "marked_as_read"}
 
 
+def _format_reply(customer: str, lines: list[str]) -> str:
+    """Return a friendly reply body given the customer name and body lines."""
+    return "\n".join(
+        [
+            f"Hello {customer},",
+            "",
+            *lines,
+            "",
+            "Best regards,",
+            "PaperCo Operations",
+        ]
+    )
+
+
+@ai_function()
 def respond_confirmation_email(
     message_id: str,
     pdf_url: str | None = None,
+    retrieved_po: dict[str, Any] | None = None,
 ) -> dict[str, str]:
-    """Send the standard confirmation reply for a fulfilled order.
+    """Send a confirmation email for an approved order.
 
     Args:
-        message_id: The Gmail message ID to reply to.
-        pdf_url: Optional URL to the invoice PDF.
-    Returns:
-        A dictionary with the sent message ID and status.
+        message_id: Gmail message ID to reply to.
+        pdf_url: Optional invoice link for the customer.
+        retrieved_po: Included so approval prompts can show the order details.
     """
     service, headers, thread_id = _load_reply_context(message_id)
 
     customer = headers.get("From", "Valued Customer")
-    invoice_line = (
-        f"You can find the invoice from your order here: {pdf_url}"
-        if pdf_url
-        else "We will send the invoice link as soon as it is ready."
-    )
-
-    reply_body = (
-        f"Hello {customer},\n\n"
-        "Your purchase order has been confirmed.\n"
-        "We're processing your items and will notify you once they ship.\n"
-        f"{invoice_line}\n\n"
-        "Thank you for choosing PaperCo!\n\n"
-        "Best regards,\n"
-        "PaperCo Operations"
+    reply_body = _format_reply(
+        customer,
+        [
+            "Your purchase order has been confirmed.",
+            "We're processing your items and will notify you once they ship.",
+            (
+                f"You can download the invoice here: {pdf_url}"
+                if pdf_url
+                else "We will email the invoice link as soon as it is ready."
+            ),
+            "",
+            "Thank you for choosing PaperCo!",
+        ],
     )
 
     return _send_reply(service, headers, thread_id, reply_body)
 
 
+@ai_function()
 def respond_unfulfillable_email(
     message_id: str,
     reason: str,
+    retrieved_po: dict[str, Any] | None = None,
 ) -> dict[str, str]:
-    """Send an unfulfillable order reply that includes a rejection reason.
+    """Send a graceful rejection email when we cannot fulfill an order.
 
     Args:
-        message_id: The Gmail message ID to reply to.
-        reason: Reason for rejecting the order.
-    Returns:
-        A dictionary with the sent message ID and status.
+        message_id: Gmail message ID to reply to.
+        reason: Human-readable explanation for the rejection.
+        retrieved_po: Included so approval prompts can show the order details.
     """
     service, headers, thread_id = _load_reply_context(message_id)
 
     customer = headers.get("From", "Valued Customer")
-    reason_text = reason or "<add rejection reason here>"
-
-    reply_body = (
-        f"Hello {customer},\n\n"
-        "Thanks for your purchase order. Unfortunately, we cannot fulfill it at this time.\n"
-        f"Reason: {reason_text}\n\n"
-        "If you have any questions or can offer alternatives, just reply to this email.\n\n"
-        "Best regards,\n"
-        "PaperCo Operations"
+    reply_body = _format_reply(
+        customer,
+        [
+            "Thanks for your purchase order. Unfortunately, we cannot fulfill it at this time.",
+            f"Reason: {reason or '<provide rejection reason>'}",
+            "",
+            "If you have any questions or alternatives, reply to this email.",
+        ],
     )
 
     return _send_reply(service, headers, thread_id, reply_body)
+
+
 
 
 # ---------------------------------------#
 # ------------ Main function ------------#
 # ---------------------------------------#
-
 
 def main() -> None:
     """
@@ -318,6 +373,9 @@ def main() -> None:
     """
     gmail = _authenticate_gmail()  # Authenticate with Gmail API
     emails = fetch_unread_emails(gmail)  # Retrieve unread emails
+
+    if not emails:
+        raise ValueError("No unread emails found.")
 
     print(f"\n{len(emails)} unread email(s)")  # Display count
     for email in emails:
