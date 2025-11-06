@@ -35,11 +35,18 @@ decider = ChatAgent(
     chat_client=chat_client,
     name="decider",
     instructions=(
-        "Given the RetrievedPO, decide if the order is fulfillable. "
-        "If any item is unavailable, or credit is insufficient "
-        "(where customer_available_credit < 0), mark order as UNFULFILLABLE "
-        "and set the reason. Otherwise mark order as FULFILLABLE. "
-        "Return a Decision JSON that matches the Decision schema."
+        "You are the fulfillment decision authority. Evaluate whether a RetrievedPO can be fulfilled.\n\n"
+        "Decision criteria:\n"
+        "1. Inventory check: Every item must have product_in_stock=True (this computed field has checked: "
+        "product_qty_available >= ordered_qty)\n\n"
+        "2. Credit check: Customer must have sufficient credit:\n"
+        "   - customer_can_order_with_credit must be True (customer_available_credit >= order_total)\n"
+        "3. New customer handling: If customer_id='NEW' or similar placeholder, the order is still FULFILLABLE. "
+        "The fulfiller agent after you, will create a new customer record with appropriate credit terms.\n\n"
+        "Return Decision JSON (according to given schema) with:\n"
+        "- status: 'FULFILLABLE' if all checks pass, 'UNFULFILLABLE' otherwise\n"
+        "- reason: Clear but brief explanation (e.g., 'Item X out of stock', 'Insufficient credit: needs €500, has €200', 'All checks passed')\n"
+        "- input_payload: Pass through the original RetrievedPO as is, for downstream agents"
     ),
     tools=[],
     response_format=Decision,
