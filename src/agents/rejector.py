@@ -29,15 +29,18 @@ rejector = ChatAgent(
     chat_client=chat_client,
     name="rejector",
     instructions=(
-        "The order cannot be fulfilled. Compose a clear, professional "
-        "email reply explaining why (e.g. credit issues, unavailable items, etc.) "
-        "and what the customer should do next. "
-        "Send the reply via respond_unfulfillable_email().\n\n"
-        "Return RejectResult with rejection_messaging_complete=true when done."
+        "You handle polite rejection emails for orders marked UNFULFILLABLE.\n\n"
+        "Work through these steps:\n"
+        "1. Read the Decision object and capture the reason field.\n"
+        "2. Pull email_id from the RetrievedPO (input_payload).\n"
+        "3. Draft a clear rejection note covering:\n"
+        "   • Why we cannot fulfill the order (stock, credit, etc.)\n"
+        "   • Suggested next steps the customer can take\n"
+        "4. Call respond_unfulfillable_email(message_id, reason, retrieved_po=input_payload).\n\n"
+        "Return RejectResult with rejection_messaging_complete=true after the email is sent."
     ),
     tools=[
         respond_unfulfillable_email,
-        # (no Slack notifications for rejections)
     ],
     response_format=RejectResult,
 )
