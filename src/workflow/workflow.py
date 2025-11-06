@@ -1,15 +1,16 @@
 import asyncio
+import json
 import sys
 from pathlib import Path
+from typing import Any
 
 # Ensure the repository's src/ directory is importable when running as a script.
 PROJECT_SRC = Path(__file__).resolve().parents[1]
 if str(PROJECT_SRC) not in sys.path:
     sys.path.insert(0, str(PROJECT_SRC))
 
-from agent_framework import WorkflowBuilder
+from agent_framework import WorkflowBuilder, ChatMessage
 from agent_framework.devui import serve
-
 from agents import (
     classifier,
     decider,
@@ -18,7 +19,11 @@ from agents import (
     rejector,
     retriever,
 )
-from emailing.gmail_tools import fetch_unread_emails, mark_email_as_read
+from emailing.gmail_tools import (
+    fetch_unread_emails,  # this is NOT the AI function get_unread_emails!
+    mark_email_as_read
+)
+# from messaging.slack_human_approved_msg import request_slack_approval
 
 
 def should_parse(resp) -> bool:
@@ -49,13 +54,14 @@ def create_workflow():
         .build()
     )
 
-
+# It's a global workflow instance template; fresh instances are created per run.
 workflow = create_workflow()
 
 
 async def run_till_mail_read():
     """Run the workflow repeatedly until no unread Gmail messages remain."""
     processed = 0
+    
     while True:
         unread_messages = fetch_unread_emails()
         if not unread_messages:
@@ -77,17 +83,19 @@ async def run_till_mail_read():
             "then continue through parsing, resolution, and routing."
         )
 
+        # Create a fresh workflow instance for this run (to avoid state leakage)
         workflow_instance = create_workflow()
 
-        async for event in workflow_instance.run_stream(kickoff_prompt):
-            if (
-                not isinstance(event, type(event))
-                or "Update" not in type(event).__name__
-            ):
-                print(f"[WORKFLOW] {type(event).__name__}")
+        # Run the workflow
+        print("[WORKFLOW] Starting workflow execution...")
+        result = await workflow_instance.run(kickoff_prompt)
+        print(f"[WORKFLOW] ✓ Workflow completed")
 
+        # After processing, mark the email as read
         mark_result = mark_email_as_read(current["id"])
+
         processed += 1
+        
         print(
             f"[WORKFLOW] ✓ Marked email {mark_result['id']}"
             f" as read (processed={processed})"
