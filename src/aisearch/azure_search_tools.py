@@ -526,7 +526,7 @@ def ingest_customers_from_airtable() -> dict[str, Any]:
 def semantic_and_hybrid_search(
     index_name: str,
     query_text: str,
-    top: int = 5,
+    top: int = 3,
     *,  # Force keyword-only arguments after this point (for clarity)
     select: Sequence[str] | None = None,  # Fields to return. Sequence is list/tuple
     filter: str | None = None,  # OData filter expression
@@ -585,7 +585,7 @@ def semantic_and_hybrid_search(
 
 def _search_customers(
     query: str,
-    top: int = 5,
+    top: int = 3,
 ) -> list[dict[str, Any]]:
     """Searches customers by name, address, and other details given as a query.
     It uses semantic and hybrid search to find relevant customer records from
@@ -653,8 +653,8 @@ def _search_products(
     )
 
 # Register search functions as AI functions for agent use
-search_customers = ai_function()(_search_customers)
-search_products = ai_function()(_search_products)
+search_customers = ai_function(_search_customers)
+search_products = ai_function(_search_products)
 
 
 # ============================================================================
@@ -687,7 +687,7 @@ if __name__ == "__main__":
     print("\n" + "=" * 40 + "\n COMPLETED" + "\n" + "=" * 40 + "\n")
 
 
-    ########## Delete Indexes from Azure AI Search ############
+    # ########## Delete Indexes from Azure AI Search ############
     # result = INDEX_CLIENT.delete_index(INDEX_NAME_PRODUCTS)
     # print(result)
     # result = INDEX_CLIENT.delete_index(INDEX_NAME_CUSTOMERS)
