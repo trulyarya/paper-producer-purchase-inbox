@@ -1,3 +1,4 @@
+loguru # For logging
 requests # For making HTTP requests to APIs
 python-dotenv # For environment variable management
 beautifulsoup4 # For HTML parsing
