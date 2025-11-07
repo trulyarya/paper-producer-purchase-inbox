@@ -1,9 +1,10 @@
 from typing import Annotated
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from agent_framework import ChatAgent, ai_function
+from agent_framework import ChatAgent
 
 from agents.base import chat_client
+from agents.tool_capture import CaptureSearchMiddleware, search_evidence
 from aisearch.azure_search_tools import search_products, search_customers
 
 
@@ -13,87 +14,64 @@ class RetrievedItem(BaseModel):
         str,
         Field(
             description="Resolved customer identifier from CRM (Customers) "
-            "through similarity search",
-        ),
-    ]
+            "through similarity search")]
     customer_name: Annotated[
         str,
         Field(
             description="Resolved customer name from CRM (Customers) "
-            "through similarity search",
-        ),
-    ]
+            "through similarity search")]
     customer_address: Annotated[
         str,
         Field(
             description="Resolved customer address from CRM (Customers) "
-            "through similarity search",
-        ),
-    ]
+            "through similarity search")]
     product_sku: Annotated[
         str,
         Field(
             description="Matched product SKU identifier from catalog (Products) "
-            "through similarity search",
-        ),
-    ]
+            "through similarity search")]
     product_name: Annotated[
         str,
         Field(
             description="Matched product name or title from catalog (Products) "
-            "through similarity search",
-        ),
-    ]
+            "through similarity search")]
     product_qty_available: Annotated[
         int,
         Field(
             ge=0,
             description="Quantity available in stock for this SKU, from catalog "
-            "retrieved from Products table through similarity search",
-        ),
-    ]
+            "retrieved from Products table through similarity search")]
     ordered_qty: Annotated[
         int,
         Field(
             gt=0,
             strict=True,
             description="Quantity ordered by customer for this line item "
-            "based on PO email",
-        ),
-    ]
+            "based on PO email")]
     unit_price: Annotated[
         float,
         Field(
             ge=0,
             strict=True,
-            description="Unit price in EUR",
-        ),
-    ]
+            description="Unit price in EUR")]
     vat_rate: Annotated[
         float,
         Field(
             default=0.19,
-            description="VAT rate (default 19% for Germany)",
-        ),
-    ]
+            description="VAT rate (default 19% for Germany)")]
     product_in_stock: Annotated[
         bool,
         Field(
             default=False,
             description="Whether the item is in stock and available: "
-            "only `True` if: `product_qty_available >= ordered_qty` "
-            "else: `False`",
-        ),
-    ]
+            "only `True` if: `product_qty_available >= ordered_qty` else: `False`")]
     subtotal: Annotated[
         float,
         Field(
             default=0.0,
             ge=0,
             strict=True,
-            description="Line item subtotal for each SKU (ordered_qty * unit_price)",
-        ),
-    ]
+            description="Line item subtotal for each SKU (ordered_qty * unit_price)")]
 
     # Compute derived fields after initialization, otherwise the retriever agent may
     # miss including them in the output, if we use computed_field decorators.
@@ -109,95 +87,80 @@ class RetrievedPO(BaseModel):
     email_id: Annotated[
         str,
         Field(
-            description="Gmail message ID of the original purchase order email",
-        ),
-    ]
+            description="Gmail message ID of the original purchase order email")]
+    po_number: Annotated[
+        str,
+        Field(
+            description="Purchase order number or reference from the original PO email")]
     customer_id: Annotated[
         str,
         Field(
-            description="Customer identifier or account number",
-        ),
-    ]
+            description="Customer identifier or account number")]
     customer_name: Annotated[
         str,
         Field(
-            description="Customer's business or contact name",
-        ),
-    ]
+            description="Customer's business or contact name")]
     customer_overall_credit_limit: Annotated[
         float,
         Field(
-            description="Customer's overall credit limit",
-        ),
-    ]
+            description="Customer's overall credit limit")]
     customer_open_ar: Annotated[
         float,
         Field(
-            description="Customer's current open accounts receivable amount " \
-            "(how much the customer currently owes)",
-        ),
-    ]
+            description="Customer's current open accounts receivable amount "
+            "(how much the customer currently owes)")]
     customer_available_credit: Annotated[
         float,
         Field(
             default=0.0,
             description="Customer's available credit to fulfill this order "
-            "(customer_overall_credit_limit - customer_open_ar)",
-        ),
-    ]
+            "(customer_overall_credit_limit - customer_open_ar)")]
     items: Annotated[
         list[
             RetrievedItem
         ],
         Field(
             description="list of retrieved order line items (products) matched "
-            "through similarity search",
-        ),
-    ]   
+            "through similarity search")]
     tax: Annotated[
         float,
         Field(
             default=0.0,
             ge=0,
             strict=True,
-            description="Calculated sales tax (sum of line subtotal * VAT rate)",
-        ),
-    ]
+            description="Calculated sales tax (sum of line subtotal * VAT rate)")]
     shipping: Annotated[
         float,
         Field(
             default=0.0,
             ge=0,
             strict=True,
-            description="Flat shipping fee (€25 if subtotal > 0)",
-        ),
-    ]
+            description="Flat shipping fee (€25 if subtotal > 0)",)]
     subtotal: Annotated[
         float,
         Field(
             default=0.0,
             ge=0,
             strict=True,
-            description="Subtotal of all line items before tax and shipping",
-        ),
-    ]
+            description="Subtotal of all line items before tax and shipping")]
     order_total: Annotated[
         float,
         Field(
             default=0.0,
             ge=0,
             strict=True,
-            description="Final total: subtotal + tax + shipping",
-        ),
-    ]
+            description="Final total: subtotal + tax + shipping")]
     customer_can_order_with_credit: Annotated[
         bool,
         Field(
             description="Whether the customer can place orders using credit: "
-            "Only 'True' if customer_available_credit >= order_total else 'False'",
-        ),
-    ]
-
+            "Only 'True' if customer_available_credit >= order_total else 'False'",)]
+    # Carry forward the evidence so the fact-checker can ground each field.
+    retrieval_evidence: Annotated[
+        list[str],
+        Field(
+            default_factory=list,
+            description="Raw search documents (as JSON strings) that justify this RetrievedPO")]
 
     # Compute derived fields after initialization, otherwise the retriever agent may
     # miss including them in the output, if we use computed_field decorators.
@@ -209,6 +172,8 @@ class RetrievedPO(BaseModel):
         self.subtotal = sum(item.subtotal for item in self.items)
         self.order_total = self.subtotal + self.tax + self.shipping
         self.customer_can_order_with_credit = self.customer_available_credit >= self.order_total
+        # Auto-populate evidence from middleware capture without relying on LLM
+        self.retrieval_evidence = search_evidence.copy()
         return self
 
 
@@ -224,7 +189,10 @@ retriever = ChatAgent(
         "2. For each line item: Call search_products() with the product SKU and name (title or description) from the ParsedPO. "
         "Select the best match for each product item and extract: sku, title, unitPrice, qtyAvailable.\n\n"
         "3. Build the RetrievedPO output object with the exact schema requested as response_format. "
-        "Populate all required fields with the enriched data.\n\n"
+        "Populate all required fields with the enriched data. "
+        "IMPORTANT: Carry forward the email_id and po_number from the input ParsedPO unchanged.\n\n"
+        "4. For groundedness checks, capture the exact customer/product documents you relied on. "
+        "Serialize each chosen Azure Search hit to JSON and add it to the retrieval_evidence list.\n\n"
         "Important: Do not calculate totals manually. The schema has @computed_field properties that automatically "
         "calculate all necessary fields. By providing the required fields, computed fields are derived automatically.\n\n"
         "If a customer match isn't found (new customer), use placeholder values (e.g., customerId='NEW', creditLimit=0, openAR=0) "
@@ -233,6 +201,9 @@ retriever = ChatAgent(
     tools=[
         search_customers,
         search_products,
+    ],
+    middleware=[
+        CaptureSearchMiddleware(),
     ],
     response_format=RetrievedPO,
 )
