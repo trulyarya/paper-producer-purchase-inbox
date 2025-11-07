@@ -14,13 +14,13 @@ def main() -> None:
     # # UNCOMMENT BELOW to run the workflow:
 
     # Run the workflow to process unread emails
-    # asyncio.run(run_till_mail_read())
+    asyncio.run(run_till_mail_read())
 
 
     # # UNCOMMENT BELOW TWO LINES to start the DevUI to visualize the workflow:
 
-    from agent_framework_devui import serve  # serve means to start the dev UI
-    serve([workflow], auto_open=True)  # Automatically open the UI in a browser
+    # from agent_framework_devui import serve  # serve means to start the dev UI
+    # serve([workflow], auto_open=True)  # Automatically open the UI in a browser
 
 
 if __name__ == "__main__":
