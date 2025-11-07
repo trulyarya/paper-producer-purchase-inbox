@@ -10,12 +10,12 @@ load_dotenv()
 
 
 @ai_function
-def check_email_content_safety(email_text: str, threshold: int = 4) -> dict:
+def check_email_content_safety(email_body: str, threshold: int = 4) -> dict:
     """
     Check if email text contains harmful content (Hate, Self-Harm, Sexual, Violence).
     
     Args:
-        email_text: The email text to analyze
+        email_body: The email body to analyze
         threshold: Severity score threshold (0-7, default 4)
     Returns:
         dict: {
@@ -36,7 +36,7 @@ def check_email_content_safety(email_text: str, threshold: int = 4) -> dict:
     
     # Analyze text, which checks all 4 categories automatically:
     # Hate, Self-Harm, Sexual, Violence
-    result = client.analyze_text(AnalyzeTextOptions(text=email_text))
+    result = client.analyze_text(AnalyzeTextOptions(text=email_body))
     
     # Flag categories that exceed threshold
     categories_flagged = [
