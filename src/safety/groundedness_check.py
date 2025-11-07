@@ -31,7 +31,7 @@ def check_agent_groundedness(
     if not azure_ai_project:
         raise ValueError("AZURE_AI_PROJECT_ENDPOINT env variable must be set!")
     
-
+    # Configure LLM model deployment that the evaluator will use
     model_config = {
         "azure_endpoint": os.getenv("AZURE_OPENAI_ENDPOINT"),
         "azure_deployment": "gpt-4.1",
