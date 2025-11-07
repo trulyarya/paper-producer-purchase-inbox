@@ -14,3 +14,4 @@ scratch
 PRD.md
 src/agents/prompts
 docs
+logs/*
