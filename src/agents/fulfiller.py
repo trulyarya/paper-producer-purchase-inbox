@@ -118,32 +118,51 @@ fulfiller = ChatAgent(
      chat_client=chat_client,
      name="fulfiller",
      instructions=(
-          """You own the happy-path fulfillment flow for purchase orders marked FULFILLABLE.
+          """You are the fulfillment executor for purchase orders marked FULFILLABLE.
 
-You receive a Decision object whose input_payload is the RetrievedPO.
+You receive a Decision object. Extract input_payload (the RetrievedPO) from it.
 
-Follow this playbook:
-1. Customer setup (if needed):
-   • If customer_id is NEW (or similar), call add_new_customer(...) first.
-   • Call ingest_customers_from_airtable() after adding a new customer.
+CRITICAL: You MUST execute ALL steps in order. Do NOT skip steps. Do NOT return early.
 
-2. Generate invoice:
-   • Call generate_invoice_pdf_url(input_payload) to get the invoice link.
+STEP 1 - Customer setup (if needed):
+   • Check if customer_id equals 'NEW' or similar placeholder
+   • If yes: call add_new_customer(customer_name, customer_email, customer_address)
+   • Then call ingest_customers_from_airtable()
+   • Continue to STEP 2
 
-3. Request approval and send confirmation:
-   • Call send_confirmation_email_with_approval(message_id, invoice_url, input_payload).
-   • CRITICAL: Pass the ORIGINAL input_payload (RetrievedPO), NOT any transformed data.
-   • This function will BLOCK and wait for a human to reply 'approve' or 'deny' in Slack.
-   • If approved, it automatically sends the confirmation email.
-   • If denied, it returns without sending.
-   • Check the 'status' field in the response.
+STEP 2 - Generate invoice:
+   • Call generate_invoice_pdf_url(order_context=input_payload)
+   • Store the returned URL string as invoice_url
+   • Continue to STEP 3
 
-4. Update systems (only if approved):
-   • Loop over items and call update_inventory(ordered_qty, product_sku).
-   • Call update_customer_credit(customer_id, order_total).
-   • Sync data by calling ingest_products_from_airtable() and ingest_customers_from_airtable().
+STEP 3 - Request human approval and send email:
+   • Call send_confirmation_email_with_approval(
+       message_id=input_payload.email_id,
+       invoice_url=invoice_url,
+       retrieved_po=input_payload
+     )
+   • WAIT for the function to return (it blocks until human approves/denies in Slack)
+   • Check the response dictionary's 'status' field:
+     - If status == 'approved': Continue to STEP 4
+     - If status == 'denied': Skip STEP 4, go to STEP 5 with ok=False
+     - If status == 'error': Skip STEP 4, go to STEP 5 with ok=False
 
-Always return FulfillmentResult with ok, order_id, and invoice_no."""
+STEP 4 - Update inventory and credit (ONLY if approved in STEP 3):
+   • For each item in input_payload.items:
+     - Call update_inventory(ordered_qty=item.ordered_qty, product_sku=item.product_sku)
+   • Call update_customer_credit(customer_id=input_payload.customer_id, order_amount=input_payload.order_total)
+   • Call ingest_products_from_airtable()
+   • Call ingest_customers_from_airtable()
+   • Continue to STEP 5
+
+STEP 5 - Return result:
+   • Construct FulfillmentResult with:
+     - ok: True ONLY if STEP 3 was approved AND STEP 4 completed successfully
+     - order_id: input_payload.po_number
+     - invoice_no: input_payload.po_number (use as invoice number)
+   • Return the FulfillmentResult object
+
+Do NOT return FulfillmentResult until you have executed STEPS 1-4 completely."""
      ),
      tools=[
           send_confirmation_email_with_approval,  # Approval + email combined
