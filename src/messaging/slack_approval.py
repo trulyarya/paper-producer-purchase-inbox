@@ -7,18 +7,18 @@ until a human replies with 'approve' or 'deny' in the thread.
 import os
 import re
 import time
-import json
 from typing import Any
 
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
+from loguru import logger
 
 
 def _format_order_summary(retrieved_po: dict[str, Any]) -> str:
     """Build the Slack approval message from enriched PO data.
     
     IMPORTANT: Uses the ACTUAL field names output by the agent:
-    - product_name, ordered_qty, unit_price, subtotal
+        product_name, ordered_qty, unit_price, subtotal
     """
     po_data = {k: v for k, v in retrieved_po.items()}
     
@@ -44,9 +44,9 @@ def _format_order_summary(retrieved_po: dict[str, Any]) -> str:
             )
         else:
             # Log which format keys we tried and what we found
-            print(f"[SLACK] ERROR: Item has wrong schema! Keys: {list(item_data.keys())}")
-            print(f"[SLACK] Expected: ordered_qty, product_name, unit_price, subtotal")
-            print(f"[SLACK] Got: qty={qty}, name={name}, price={price}, subtotal={subtotal}")
+            logger.error("[SLACK] ERROR: Item has wrong schema! Keys: {}", list(item_data.keys()))
+            logger.error("[SLACK] Expected: ordered_qty, product_name, unit_price, subtotal")
+            logger.error("[SLACK] Got: qty={}, name={}, price={}, subtotal={}", qty, name, price, subtotal)
             item_lines.append(f"- ERROR: Item schema mismatch")
 
     if not item_lines:
@@ -106,6 +106,15 @@ def post_approval_request(retrieved_po: dict[str, Any]) -> str:
         )
 
 
+def _has_keyword(keywords: set[str], text: str) -> bool:
+    """Return True if any keyword is present as a standalone word in the text.
+    Used for detecting 'approve' or 'deny' in Slack replies.
+    """
+    return any(
+        re.search(rf"\b{re.escape(keyword)}\b", text) for keyword in keywords
+    )
+
+
 def get_approval_from_slack(
     channel: str,
     thread_ts: str,
@@ -137,12 +146,13 @@ def get_approval_from_slack(
     start_time = time.time()
     
     # Approval/denial keywords (case-insensitive)
-    approve_keywords = {"approve", "approved", "yes", "y"}
-    deny_keywords = {"deny", "denied", "reject", "rejected", "no", "n"}
-    
-    print(f"[APPROVAL] Waiting for human response in Slack (timeout: {timeout}s)...")
-    print(f"[APPROVAL] Monitoring channel: {channel}, thread: {thread_ts}")
-    
+    approve_keywords = {"approve", "approved", "yes", "y", "yep", "ja", "confirm"}
+    deny_keywords = {"deny", "denied", "reject", "rejected", "no", "n", "nope"}
+
+    logger.debug("[APPROVAL] Posting order to Slack for human review...")
+    logger.debug("[APPROVAL] Waiting for human response in Slack (timeout: {}s)...", timeout)
+    logger.debug("[APPROVAL] Monitoring channel: {}, thread: {}", channel, thread_ts)
+
     while (time.time() - start_time) < timeout:
         try:
             # Fetch all replies in this thread
@@ -156,30 +166,33 @@ def get_approval_from_slack(
             
             # Debug: show how many messages we found
             if len(messages) > 1:
-                print(f"[APPROVAL] Found {len(messages) - 1} replies in thread...")
+                logger.info("[APPROVAL] Found {} replies in thread...", len(messages) - 1)
             
             # Skip the first message (the original approval request)
             for msg in messages[1:]:
-                text = msg.get("text", "").strip().lower()
-                print(f"[APPROVAL] Checking reply: '{text}'")
+                text = msg.get("text", "").strip().lower()  # Normalize text from Slack for matching
+                logger.debug("[APPROVAL] Checking reply: '{}'", text)
                 
                 # Check for approval in the message text by keywords
-                if any(keyword in text for keyword in approve_keywords):
-                    print(f"[APPROVAL] ✓ Human approved the order")
+                if _has_keyword(keywords=approve_keywords,
+                                text=text):
+                    logger.debug("[APPROVAL] ✓ Human approved the order")
                     return True
 
                 # Check for denial in the message text by keywords
-                if any(keyword in text for keyword in deny_keywords):
-                    print(f"[APPROVAL] ✗ Human denied the order")
+                if _has_keyword(keywords=deny_keywords,
+                                text=text):
+
+                    logger.info("[APPROVAL] ✗ Human denied the order")
                     return False
             
             # No decision yet, wait before next poll
             time.sleep(poll_interval)
             
         except SlackApiError as e:
-            print(f"[APPROVAL] Warning: Slack API error during polling: {e}")
+            logger.error("[APPROVAL] Slack API error during polling: {}", e)
             time.sleep(poll_interval)
     
     # Timeout reached with no decision
-    print(f"[APPROVAL] ⏱ Timeout reached ({timeout}s) - defaulting to DENY")
+    logger.warning("[APPROVAL] ⏱ Timeout reached ({}s) - defaulting to DENY", timeout)
     return False
