@@ -6,7 +6,27 @@ from agents.fact_checker import fact_checker
 from agents.decider import decider
 from agents.fulfiller import fulfiller
 from agents.rejector import rejector
-from agents.tool_capture import CaptureSearchMiddleware
+from agents.tool_capture import (
+    ToolCaptureMiddleware,
+    # This function attaches the middleware to agents like this: attach_capture_middleware(agent1, agent2, ...)
+    attach_capture_middleware,
+)
+
+# Ensure every agent captures tool calls for consistent debugging evidence.
+# This is idempotent and will not duplicate middleware if already present.
+# We attach the middleware to all relevant agents here.
+# This is done at the package level to ensure consistency across all agents,
+# including any future agents added to this module.
+# It is done here instead of in each agent's module to avoid redundancy.
+attach_capture_middleware(  # Function that attaches middleware to multiple agents
+    classifier,
+    parser,
+    retriever,
+    fact_checker,
+    decider,
+    fulfiller,
+    rejector,
+)
 
 
 __all__ = [
@@ -18,5 +38,5 @@ __all__ = [
     "fulfiller",
     "rejector",
     "chat_client",
-    "CaptureSearchMiddleware",
+    "ToolCaptureMiddleware",
 ]
