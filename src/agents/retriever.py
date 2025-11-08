@@ -4,7 +4,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from agent_framework import ChatAgent
 
 from agents.base import chat_client
-from agents.tool_capture import CaptureSearchMiddleware, search_evidence
+from agents.tool_capture import get_evidence
 from aisearch.azure_search_tools import search_products, search_customers
 
 
@@ -173,7 +173,7 @@ class RetrievedPO(BaseModel):
         self.order_total = self.subtotal + self.tax + self.shipping
         self.customer_can_order_with_credit = self.customer_available_credit >= self.order_total
         # Auto-populate evidence from middleware capture without relying on LLM
-        self.retrieval_evidence = search_evidence.copy()
+        self.retrieval_evidence = get_evidence()
         return self
 
 
@@ -201,9 +201,6 @@ retriever = ChatAgent(
     tools=[
         search_customers,
         search_products,
-    ],
-    middleware=[
-        CaptureSearchMiddleware(),
     ],
     response_format=RetrievedPO,
 )
