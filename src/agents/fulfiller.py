@@ -45,7 +45,6 @@ def send_confirmation_email_with_approval(
     import os
     
     # Step 1: Post order to Slack and get thread timestamp
-    print(f"[APPROVAL] Posting order to Slack for human review...")
     try:
         thread_ts = post_approval_request(retrieved_po)
     except Exception as e:
@@ -56,7 +55,6 @@ def send_confirmation_email_with_approval(
         }
     
     # Step 2: Block and wait for human approval (polls Slack thread every 2s)
-    print(f"[APPROVAL] Waiting for human response in Slack...")
     channel = os.getenv("SLACK_APPROVAL_CHANNEL", "orders")  # Channel name WITHOUT #
     approved = get_approval_from_slack(
         channel=channel,
@@ -66,7 +64,6 @@ def send_confirmation_email_with_approval(
     
     # Step 3: If approved, send confirmation email immediately
     if approved:
-        print(f"[APPROVAL] ✓ Approved! Sending confirmation email...")
         try:
             respond_confirmation_email(
                 message_id=message_id,
