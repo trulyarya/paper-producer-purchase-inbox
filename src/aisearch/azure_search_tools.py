@@ -7,6 +7,7 @@ Data sourced from Airtable via airtable_tools module.
 # Add parent directory to path for module imports
 import sys
 import os
+from loguru import logger
 
 # Add parent to path so that crm.airtable_tools can be imported correctly?
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
@@ -424,7 +425,7 @@ def _upload_documents_to_index(
     )
 
     result = search_client.upload_documents(documents=documents)  # Batch upload
-    print(f"✓ Uploaded {len(result)} documents to '{index_name}'")
+    logger.debug("✓ Uploaded {} documents to '{}'", len(result), index_name)
 
 @ai_function
 def ingest_products_from_airtable() -> dict[str, Any]:
