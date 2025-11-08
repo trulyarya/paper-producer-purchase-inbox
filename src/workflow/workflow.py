@@ -1,9 +1,3 @@
-# import asyncio
-# import json
-# from typing import Any
-# from agent_framework.devui import serve
-# from messaging.slack_human_approved_msg import request_slack_approval
-
 import sys
 from pathlib import Path
 
@@ -27,7 +21,6 @@ from agents import (
     decider,
     fulfiller,
     rejector,
-    chat_client,
 )
 
 from agents.tool_capture import clear_evidence
@@ -37,16 +30,7 @@ from emailing.gmail_tools import (
     mark_email_as_read
 )
 
-from loguru import logger  # Loguru is easier to set up than logging
-
-
-# Add logger with custom formatting:
-logger.add(
-    sys.stdout,  # Log to standard output (console)
-    level="DEBUG",  # Set log level to DEBUG (capture all messages)
-    colorize=False,  # Plain output to avoid markup artifacts
-    format="[WORKFLOW] {message}",
-)
+from loguru import logger
 
 
 def should_parse(resp) -> bool:
@@ -69,14 +53,13 @@ def should_be_grounded(resp) -> bool:
     return resp.agent_run_response.value.is_grounded
 
 
-@executor
+@executor  # Decorator to make this function an executor in the workflow graph
 def log_fulfillment(fulfillment_response: AgentExecutorResponse, ctx: WorkflowContext) -> None:
     """Terminal logger for successful fulfillment runs."""
     fulfillment_result = fulfillment_response.agent_run_response.value
-    logger.debug(
-        "Fulfillment finished (ok={ok}, order_id={order_id})",
-        ok=getattr(fulfillment_result, "ok", None),
-        order_id=getattr(fulfillment_result, "order_id", ""),
+    logger.info(
+        f"Order fulfilled | ok={getattr(fulfillment_result, 'ok', None)} | "
+        f"order_id={getattr(fulfillment_result, 'order_id', '')}"
     )
 
 
@@ -84,9 +67,8 @@ def log_fulfillment(fulfillment_response: AgentExecutorResponse, ctx: WorkflowCo
 def log_rejection(rejector_response: AgentExecutorResponse, ctx: WorkflowContext) -> None:
     """Terminal logger for rejection runs."""
     rejector_result = rejector_response.agent_run_response.value
-    logger.debug(
-        "Rejection finished (notified={notified})",
-        notified=getattr(rejector_result, "rejection_messaging_complete", None),
+    logger.info(
+        f"Order rejected | notified={getattr(rejector_result, 'rejection_messaging_complete', None)}"
     )
 
 
@@ -112,24 +94,24 @@ def create_workflow():
 workflow = create_workflow()
 
 
-async def run_till_mail_read():
+async def run_till_mail_read():  # async because we'll need to await workflow.run()
     """Run the workflow repeatedly until no unread Gmail messages remain."""
     processed = 0
     
     while True:
         unread_messages = fetch_unread_emails()
         if not unread_messages:
-            print(
-                "[WORKFLOW] No unread emails remaining. "
-                f"Processed {processed} message(s)."
-            )
+            logger.info("Email processing complete | total_processed={}",
+                        processed)
             break
 
         current = unread_messages[0]
         subject_preview = current.get("subject", "").strip()
-        print(
-            "[WORKFLOW] Processing email: "
-            f"{current.get('id')} — {subject_preview or '[no subject]'}"
+        
+        logger.info(
+            "Email processing started | email_id={} | subject={}",
+            current.get("id"),
+            subject_preview or "[no subject]",
         )
 
         kickoff_prompt = (
@@ -141,9 +123,9 @@ async def run_till_mail_read():
         workflow_instance = create_workflow()
 
         # Run the workflow
-        print("[WORKFLOW] Starting workflow execution...")
-        result = await workflow_instance.run(kickoff_prompt)
-        print(f"[WORKFLOW] ✓ Workflow completed")
+        logger.info("Starting workflow execution for email_id={}", current.get('id'))
+        result = await workflow_instance.run(kickoff_prompt)  # await because run() is async
+        logger.info("Workflow completed for email_id={}", current.get('id'))
 
         # After processing, mark the email as read
         mark_result = mark_email_as_read(current["id"])
@@ -153,19 +135,8 @@ async def run_till_mail_read():
 
         processed += 1
         
-        print(
-            f"[WORKFLOW] ✓ Marked email {mark_result['id']}"
-            f" as read (processed={processed})"
+        logger.info(
+            "Email marked read | email_id={} | total_processed={}",
+            mark_result["id"],
+            processed
         )
-
-    print("[WORKFLOW] ✓ All unread messages processed")
-
-
-
-
-# if __name__ == "__main__":
-#     asyncio.run(run_till_mail_read())
-#
-#     # Start the DevUI to visualize the workflow:
-#     from agent_framework.devui import serve  
-#     serve([workflow], auto_open=True)
