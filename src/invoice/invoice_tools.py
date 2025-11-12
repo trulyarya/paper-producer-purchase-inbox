@@ -1,11 +1,11 @@
 """Generate invoice PDFs and upload them to Azure Blob Storage."""
 
-import html
 import os
 import time
 from pathlib import Path
 from typing import Any
 from datetime import datetime
+from loguru import logger
 
 from dotenv import load_dotenv
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -29,7 +29,7 @@ def transform_retrieved_po_to_invoice_context(retrieved_po: dict) -> dict:
     - product_name, ordered_qty, unit_price, subtotal (NOT the schema-defined names)
     """
     items_list = retrieved_po.get("items", [])
-    
+      
     # Extract customer info from first item or use retrieved_po level fields
     first_item = items_list[0] if items_list else {}
     
@@ -121,7 +121,8 @@ def generate_invoice_pdf_url(
     Returns:
         URL string to the uploaded invoice PDF.
     """
-    
+    logger.info("[FUNCTION generate_invoice_pdf_url] Generating invoice PDF...")
+
     html_template = html_template or (
         Path(__file__).resolve().parent / "invoice_template.html"
     ) #  .parent means the directory that directly contains this path.
@@ -137,6 +138,8 @@ def generate_invoice_pdf_url(
 
     html_content = _render_invoice_html(template_path, order_context_with_invoice)
     pdf_content = _html_to_pdf_bytes(html_content, template_path.parent.resolve())
+
+    logger.info("[FUNCTION generate_invoice_pdf_url] Uploading invoice PDF file to Azure Blob Storage...")
 
     storage_account_url = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
     if storage_account_url is None:
@@ -165,6 +168,8 @@ def generate_invoice_pdf_url(
         overwrite=True,
         content_settings=ContentSettings(content_type="application/pdf"),
     )
+
+    logger.info("[FUNCTION generate_invoice_pdf_url] Invoice PDF uploaded successfully!")
 
     return blob_client.url
 
