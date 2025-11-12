@@ -8,6 +8,9 @@ import sys
 from pathlib import Path
 from loguru import logger
 
+# Flag to ensure logging is configured only once, 
+#   even if configure_logging is called multiple times.
+
 _configured = False
 
 
@@ -25,7 +28,7 @@ def configure_logging(level: str = "DEBUG"):
     logger.add(
         sys.stdout,
         level=level,
-        format="<green>{time}</green> | <level>{level: <8}</level> | <level>{message}</level>",
+        format="<green>{time:YYYY-MM-DD at HH:mm:ss}</green> | <level>{level: <8}</level> | <level>{message}</level>",
         colorize=True,
     )
     
