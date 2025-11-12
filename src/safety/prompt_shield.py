@@ -1,6 +1,7 @@
 from dotenv import load_dotenv
 import os
 import requests
+from loguru import logger
 
 from azure.identity import DefaultAzureCredential
 from agent_framework import ai_function
@@ -39,6 +40,9 @@ def check_email_prompt_injection(email_body: str) -> dict:
         >>> print(result)
         {'is_attack': True, 'attack_type': 'UserPrompt'}
     """
+    logger.info("[FUNCTION check_email_prompt_injection] Checking email for "
+                "prompt injection attacks using Azure Content Safety...")
+
     endpoint = os.getenv("CONTENT_SAFETY_ENDPOINT")
     if not endpoint:
         raise ValueError("CONTENT_SAFETY_ENDPOINT env variable must be set!")
@@ -74,10 +78,18 @@ def check_email_prompt_injection(email_body: str) -> dict:
             doc.get("attackDetected", False) for doc in documents_analysis
         )
         
+        logger.info("[FUNCTION check_email_prompt_injection] Prompt injection "
+                    "check completed with attack-attempt result being: {}, and "
+                    "attack type: {}.",
+                    document_attack,
+                    "DocumentAttack" if document_attack else None)
+
         return {
             "is_attack": document_attack,  # True if any attack detected
             "attack_type": "DocumentAttack" if document_attack else None,
         }
+    
+        
 
     except requests.exceptions.RequestException as e:  # Catch network-related errors
         print(f"Error analyzing text for prompt injection: {e}")
@@ -86,6 +98,8 @@ def check_email_prompt_injection(email_body: str) -> dict:
             "attack_type": None,
             "error": str(e)
         }
+    
+    
 
 
 
