@@ -149,9 +149,9 @@ def get_approval_from_slack(
     approve_keywords = {"approve", "approved", "yes", "y", "yep", "ja", "confirm"}
     deny_keywords = {"deny", "denied", "reject", "rejected", "no", "n", "nope"}
 
-    logger.debug("[APPROVAL] Posting order to Slack for human review...")
-    logger.debug("[APPROVAL] Waiting for human response in Slack (timeout: {}s)...", timeout)
-    logger.debug("[APPROVAL] Monitoring channel: {}, thread: {}", channel, thread_ts)
+    logger.debug("[SLACK APPROVAL] Posting order to Slack for human review...")
+    logger.debug("[SLACK APPROVAL] Waiting for human response in Slack (timeout: {}s)...", timeout)
+    logger.debug("[SLACK APPROVAL] Monitoring channel: {}, thread: {}", channel, thread_ts)
 
     while (time.time() - start_time) < timeout:
         try:
@@ -166,33 +166,33 @@ def get_approval_from_slack(
             
             # Debug: show how many messages we found
             if len(messages) > 1:
-                logger.info("[APPROVAL] Found {} replies in thread...", len(messages) - 1)
+                logger.info("[SLACK APPROVAL] Found {} replies in thread...", len(messages) - 1)
             
             # Skip the first message (the original approval request)
             for msg in messages[1:]:
                 text = msg.get("text", "").strip().lower()  # Normalize text from Slack for matching
-                logger.debug("[APPROVAL] Checking reply: '{}'", text)
+                logger.debug("[SLACK APPROVAL] Checking reply: '{}'", text)
                 
                 # Check for approval in the message text by keywords
                 if _has_keyword(keywords=approve_keywords,
                                 text=text):
-                    logger.debug("[APPROVAL] ✓ Human approved the order")
+                    logger.debug("[SLACK APPROVAL] ✓ Human approved the order")
                     return True
 
                 # Check for denial in the message text by keywords
                 if _has_keyword(keywords=deny_keywords,
                                 text=text):
 
-                    logger.info("[APPROVAL] ✗ Human denied the order")
+                    logger.info("[SLACK APPROVAL] ✗ Human denied the order")
                     return False
             
             # No decision yet, wait before next poll
             time.sleep(poll_interval)
             
         except SlackApiError as e:
-            logger.error("[APPROVAL] Slack API error during polling: {}", e)
+            logger.error("[SLACK APPROVAL] Slack API error during polling: {}", e)
             time.sleep(poll_interval)
     
     # Timeout reached with no decision
-    logger.warning("[APPROVAL] ⏱ Timeout reached ({}s) - defaulting to DENY", timeout)
+    logger.warning("[SLACK APPROVAL] ⏱ Timeout reached ({}s) - defaulting to DENY", timeout)
     return False
