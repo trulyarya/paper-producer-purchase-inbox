@@ -68,7 +68,6 @@ def send_confirmation_email_with_approval(
             respond_confirmation_email(
                 message_id=message_id,
                 pdf_url=invoice_url,
-                retrieved_po=retrieved_po,
             )
             return {
                 "status": "approved",
