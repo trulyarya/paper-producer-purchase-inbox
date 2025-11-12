@@ -1,5 +1,6 @@
 import os
 from dotenv import load_dotenv
+from loguru import logger
 
 from azure.ai.contentsafety import ContentSafetyClient
 from azure.ai.contentsafety.models import AnalyzeTextOptions
@@ -23,6 +24,10 @@ def check_email_content_safety(email_body: str, threshold: int = 4) -> dict:
             "categories_flagged": list[dict],  # List of flagged categories with severity
         }
     """
+    logger.info(
+        "[FUNCTION check_email_content_safety] Content safety check started for email."
+    )
+    
     # Initialize client with managed identity
     endpoint = os.getenv("CONTENT_SAFETY_ENDPOINT")
     if not endpoint:
@@ -45,6 +50,13 @@ def check_email_content_safety(email_body: str, threshold: int = 4) -> dict:
         if cat.severity is not None and cat.severity >= threshold
     ]
     
+    logger.info(
+        "[FUNCTION check_email_content_safety] Content safety check completed, "
+        "with safety result: {}, and flagged categories: {}",
+        len(categories_flagged) == 0,
+        categories_flagged
+    )
+
     return {
         # this line returns True if no categories are flagged (length 0) else False
         "is_safe": len(categories_flagged) == 0,
