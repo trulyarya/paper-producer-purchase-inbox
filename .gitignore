@@ -11,7 +11,23 @@ __pycache__/
 .github/
 .vscode
 scratch
-PRD.md
 src/agents/prompts
 docs
 logs/*
+*.backup
+
+
+# Terraform files to ignore (under ./infra/):
+# *.tfvars  # normally used to store sensitive variables, uncomment if needed
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
