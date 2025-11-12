@@ -107,7 +107,7 @@ See `workflow.md` for the ASCII diagram and quick command checklist.
 
 ### Data Inputs
 
-- Synthetic CRM dataset lives under `data/sample/`. The `data/sample/README.md` file documents each CSV table, their columns, and how the tables connect. Import all five tables into a single Airtable base before running the workflow.
+- Synthetic CRM dataset lives under `data/sample/`. Upload to Airtable with `python scripts/upload_sample_data.py` before running the workflow.
 
 ---
 
@@ -166,8 +166,8 @@ See `workflow.md` for the ASCII diagram and quick command checklist.
 
 4. **Airtable base**
    - Create a new base (e.g., `PaperCo Demo`).
-   - Import the CSVs from `data/sample/` in this order: products, customers, orders, order lines, invoices.
-   - Preserve field names; link tables if you want Airtable formula views, but the agents rely only on raw field names.
+   - Create two empty tables: `Products` and `Customers`.
+   - Upload sample data: `python scripts/upload_sample_data.py`
 
 5. **Azure AI Search indexes**
    - Ensure `AZURE_SEARCH_ENDPOINT`, `AZURE_OPENAI_ENDPOINT`, and `AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME` are set.

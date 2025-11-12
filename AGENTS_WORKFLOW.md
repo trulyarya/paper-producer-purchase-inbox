@@ -4,6 +4,7 @@
 
 | Step | Why it matters | Call |
 |---|---|---|
+| Upload sample data | Provides products and customers for the workflow | `python scripts/upload_sample_data.py` |
 | Seed the products index | Azure AI Search needs the schema before uploads | `src/aisearch/azure_search_tools.create_products_index_schema()` |
 | Seed the customers index | Same for customer lookups | `src/aisearch/azure_search_tools.create_customer_index_schema()` |
 | Load products from Airtable | Feeds live catalog data into search | `src/aisearch/azure_search_tools.ingest_products_from_airtable()` |
