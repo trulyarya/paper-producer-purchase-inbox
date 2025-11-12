@@ -8,6 +8,7 @@ from email.message import EmailMessage
 from email.utils import parseaddr
 from pathlib import Path
 from typing import Any, cast
+from loguru import logger
 
 from bs4 import BeautifulSoup  # For HTML parsing
 import base64  # For decoding email body content
@@ -137,6 +138,7 @@ def _send_reply(
     headers: dict[str, str],
     thread_id: str,
     reply_body: str,
+    html_body: str | None = None,
 ) -> dict[str, str]:
     """Create and send the Gmail reply using shared context.
 
@@ -145,6 +147,7 @@ def _send_reply(
         headers: Original message headers for reply context.
         thread_id: Thread ID to associate the reply with.
         reply_body: The plain text body of the reply email.
+        html_body: Optional HTML version for clients that strip formatting.
     Returns:
         A dictionary with the sent message ID and status.
     """
@@ -155,6 +158,8 @@ def _send_reply(
     msg["In-Reply-To"] = headers.get("Message-ID", "")
     msg["References"] = headers.get("Message-ID", "")
     msg.set_content(reply_body)
+    if html_body:
+        msg.add_alternative(html_body, subtype="html")
 
     encoded_message = base64.urlsafe_b64encode(msg.as_bytes()).decode()
 
@@ -268,6 +273,8 @@ def get_unread_emails() -> list[dict]:
         A list of dictionaries representing unread emails with id, subject,
         sender, snippet, and body.
     """
+    logger.info("[FUNCTION get_unread_emails] Fetching unread emails from Gmail inbox...")
+
     return fetch_unread_emails()
 
 
@@ -279,6 +286,9 @@ def mark_email_as_read(message_id: str) -> dict[str, str]:
         id=message_id,
         body={"removeLabelIds": ["UNREAD"]},
     ).execute()
+
+    logger.info("[FUNCTION mark_email_as_read] Marked email with ID '{}' as read.",
+                message_id)
 
     return {"id": message_id, "status": "marked_as_read"}
 
@@ -301,7 +311,7 @@ def _format_reply(customer: str, lines: list[str]) -> str:
 def respond_confirmation_email(
     message_id: str,
     pdf_url: str | None = None,
-    retrieved_po: dict[str, Any] | None = None,
+    # retrieved_po: dict[str, Any] | None = None,
 ) -> dict[str, str]:
     """Send a confirmation email for an approved order.
 
@@ -328,6 +338,11 @@ def respond_confirmation_email(
         ],
     )
 
+    logger.info(
+        "[FUNCTION respond_confirmation_email] Sending FULFILLMENT email for message ID '{}'...",
+        message_id
+    )
+
     return _send_reply(service, headers, thread_id, reply_body)
 
 
@@ -335,7 +350,7 @@ def respond_confirmation_email(
 def respond_unfulfillable_email(
     message_id: str,
     reason: str,
-    retrieved_po: dict[str, Any] | None = None,
+    # retrieved_po: dict[str, Any] | None = None,
 ) -> dict[str, str]:
     """Send a graceful rejection email when we cannot fulfill an order.
 
@@ -351,13 +366,33 @@ def respond_unfulfillable_email(
         customer,
         [
             "Thanks for your purchase order. Unfortunately, we cannot fulfill it at this time.",
-            f"Reason: {reason or '<provide rejection reason>'}",
+            f"Reason: {reason or '<provide rejection reason>'}\n\n",
+            "Next steps: \n\n",
             "",
             "If you have any questions or alternatives, reply to this email.",
         ],
     )
 
-    return _send_reply(service, headers, thread_id, reply_body)
+    safe_reason = (reason or "<provide rejection reason>")
+    safe_reason = (
+        safe_reason.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+    html_reply_body = (
+        f"<p>Hello {customer},</p>"
+        "<p>Thanks for your purchase order. Unfortunately, we cannot fulfill it at this time.</p>"
+        f"<p>Reason: {safe_reason}</p>"
+        "<p>If you have any questions or alternatives, reply to this email.</p>"
+        "<p>Best regards,<br>PaperCo Operations</p>"
+    )
+
+    logger.info(
+        "[FUNCTION respond_unfulfillable_email] Sending REJECTION email for message ID '{}'...",
+        message_id
+    )
+
+    return _send_reply(service, headers, thread_id, reply_body, html_reply_body)
 
 
 
