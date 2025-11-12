@@ -9,6 +9,8 @@ from datetime import datetime
 import requests
 from typing import Any
 from dotenv import load_dotenv
+from loguru import logger
+
 from agent_framework import ai_function
 
 # ============================================================================
@@ -117,7 +119,15 @@ def _update_record(
         json=payload
     )  # API call to UPDATE record
 
-    response.raise_for_status()  # Raise on 4xx/5xx errors
+    try:
+        response.raise_for_status()  # Raise on 4xx/5xx errors
+    except requests.exceptions.HTTPError as e:
+        logger.error(
+            "[FUNCTION _update_record] Airtable API error """ \
+            "| table={} | record_id={} | fields={} | status={} | response={}",
+            table_name, record_id, fields, response.status_code, response.text
+        )
+        raise
 
     return response.json()  # Return updated record
 
@@ -127,11 +137,13 @@ def _update_record(
 
 def get_all_products() -> list[dict[str, Any]]:
     """Fetches all products for AI Search sync. Returns raw Airtable records."""
+    logger.info("[FUNCTION get_all_products] Fetching all PRODUCTS from Airtable (for AI Search sync).")
     return _fetch_all_records(AIRTABLE_PRODUCTS_TABLE)
 
 
 def get_all_customers() -> list[dict[str, Any]]:
     """Fetches all customers for AI Search sync. Returns raw Airtable records"""
+    logger.info("[FUNCTION get_all_customers] Fetching all CUSTOMERS from Airtable (for AI Search sync).")
     return _fetch_all_records(AIRTABLE_CUSTOMERS_TABLE)
 
 
@@ -174,7 +186,11 @@ def add_new_customer(
     }
 
     created = _create_record(AIRTABLE_CUSTOMERS_TABLE, fields)
-
+    logger.info(
+        "[FUNCTION add_new_customer] Creating NEW customer with ID '{}' and record ID '{}' in Airtable.",
+        new_id,
+        created.get("id")
+    )
     return {
         "status": "created",
         "customer_id": new_id,
@@ -216,6 +232,12 @@ def update_inventory(
 
     _update_record(AIRTABLE_PRODUCTS_TABLE, record_id, fields)
 
+    logger.info(
+        "[FUNCTION update_inventory] Updating inventory for SKU '{}' to new quantity: {} in Airtable...",
+        product_sku,
+        new_inventory
+    )
+
     return {
         "status": "updated",
         "sku": product_sku,
@@ -227,7 +249,7 @@ def update_inventory(
 def update_customer_credit(
         customer_id: str,
         order_amount: float,
-) -> dict[str, float]:
+) -> dict[str, Any]:
     """Increase a customer's open AR and report back the remaining credit."""
     all_customers = _fetch_all_records(AIRTABLE_CUSTOMERS_TABLE)
     # columns: Customer ID, Name, Email, Billing Address, Shipping Address,
@@ -235,16 +257,17 @@ def update_customer_credit(
 
     updated_available_credit = 0.0
     record_id: str | None = None
+    new_open_ar = 0.0  # To be calculated
 
     for customer in all_customers:
         if customer["fields"].get("Customer ID") != customer_id:
             continue
 
         record_id = customer["id"]
-        open_ar = customer["fields"].get("Open AR", 0.0) + order_amount
+        current_open_ar = customer["fields"].get("Open AR", 0.0)
         credit_limit = customer["fields"].get("Credit Limit", 0.0)
-        updated_available_credit = credit_limit - open_ar
-        order_amount = open_ar  # re-use the parameter to hold the new Open AR value
+        new_open_ar = current_open_ar + order_amount  # Update Open AR
+        updated_available_credit = credit_limit - new_open_ar  # Calc available credit
         break
 
     if not record_id:
@@ -253,15 +276,32 @@ def update_customer_credit(
         )
 
     fields = {
-        "Open AR": order_amount,
+        "Open AR": new_open_ar,
     }
+
+    logger.info(
+        "[FUNCTION update_customer_credit] Updating Open AR for Customer ID "
+        "'{}' from {} to {} (added {}) in Airtable...",
+        customer_id, new_open_ar - order_amount, new_open_ar, order_amount
+    )
 
     # First, update Open AR field in the record of the customer
-    _update_record(AIRTABLE_CUSTOMERS_TABLE, record_id, fields)
-
+    try:
+        _update_record(AIRTABLE_CUSTOMERS_TABLE, record_id, fields)
+        logger.info(
+            "[FUNCTION update_customer_credit] Successfully updated Open AR "
+            "for Customer ID '{}'", customer_id
+        )
+    except Exception as e:
+        logger.error(
+            "[FUNCTION update_customer_credit] Failed to update Airtable record "
+            "| customer_id={} | error={}", customer_id,
+            str(e)
+        )
+        raise
+    
     # Report the new credit exposure back to the caller.
     return {
-        "open_ar": order_amount,
-        "available_credit": updated_available_credit,
+        "open_ar": float(new_open_ar),
+        "available_credit": float(updated_available_credit),
     }
-
