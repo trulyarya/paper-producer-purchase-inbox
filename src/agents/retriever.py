@@ -4,9 +4,15 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from agent_framework import ChatAgent
 
 from agents.base import chat_client
-from agents.tool_capture import get_evidence
-from aisearch.azure_search_tools import search_products, search_customers
-
+from agents.tool_capture import search_evidence
+from aisearch.azure_search_tools import (
+    create_products_index_schema,
+    create_customer_index_schema,
+    ingest_products_from_airtable,
+    ingest_customers_from_airtable,
+    search_customers,
+    search_products,
+)
 
 class RetrievedItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -173,7 +179,7 @@ class RetrievedPO(BaseModel):
         self.order_total = self.subtotal + self.tax + self.shipping
         self.customer_can_order_with_credit = self.customer_available_credit >= self.order_total
         # Auto-populate evidence from middleware capture without relying on LLM
-        self.retrieval_evidence = get_evidence()
+        self.retrieval_evidence = list(search_evidence)
         return self
 
 
@@ -182,25 +188,30 @@ retriever = ChatAgent(
     name="retriever",
     instructions=(
         "You are an order enrichment specialist. Given a ParsedPO containing customer details and line items, "
-        "your job is to resolve and enrich the data using Azure AI Search tools.\n\n"
-        "Process flow:\n"
-        "1. For the customer: Call search_customers() with the customer company name, email, and address details "
-        "from ParsedPO. Select the best match and extract: customerId, companyName, creditLimit, openAR, and addresses.\n\n"
-        "2. For each line item: Call search_products() with the product SKU and name (title or description) from the ParsedPO. "
-        "Select the best match for each product item and extract: sku, title, unitPrice, qtyAvailable.\n\n"
-        "3. Build the RetrievedPO output object with the exact schema requested as response_format. "
-        "Populate all required fields with the enriched data. "
-        "IMPORTANT: Carry forward the email_id and po_number from the input ParsedPO unchanged.\n\n"
-        "4. For groundedness checks, capture the exact customer/product documents you relied on. "
-        "Serialize each chosen Azure Search hit to JSON and add it to the retrieval_evidence list.\n\n"
-        "Important: Do not calculate totals manually. The schema has @computed_field properties that automatically "
-        "calculate all necessary fields. By providing the required fields, computed fields are derived automatically.\n\n"
-        "If a customer match isn't found (new customer), use placeholder values (e.g., customerId='NEW', creditLimit=0, openAR=0) "
-        "so the decider agent can handle appropriately."
+        "your job is to refresh Azure AI Search data sources, then resolve the PO details. Follow this exact order:\n\n"
+        "1. Call create_customer_index_schema() to create or update the customer index before doing anything else.\n"
+        "2. Call create_products_index_schema() so the products index schema is also ready.\n"
+        "3. Call ingest_customers_from_airtable() to load the latest customer table from Airtable CRM into Azure Search.\n"
+        "4. Call ingest_products_from_airtable() to load the latest products table from Airtable.\n"
+        "5. Only after the indexes are refreshed may you search: use search_customers() with the ParsedPO customer info, "
+        "then search_products() for every ParsedPO line item. Compare at least the top few results with each other, and "
+        "do NOT blindly take the first hit! Pick the SKU/title/finish that best matches the ParsedPO wording. "
+        "Pay attention to the possible translations.\n\n"
+        "While searching, pick the best matches and capture customerId, companyName, creditLimit, openAR, addresses, "
+        "and for products capture sku, title, unitPrice, qtyAvailable. Build the RetrievedPO response object exactly as defined, "
+        "carrying forward email_id and po_number untouched.\n\n"
+        "Store the raw Azure Search documents you relied on as JSON strings inside retrieval_evidence for grounding.\n"
+        "Do not calculate totals yourself—@computed_field logic handles it once the required fields are set.\n"
+        "If no customer match exists, fall back to placeholder values (e.g., customerId='NEW', creditLimit=0, openAR=0) "
+        "so downstream agents can react appropriately."
     ),
     tools=[
-        search_customers,
-        search_products,
+        create_customer_index_schema,    # ensure customers idx exists before search
+        create_products_index_schema,    # ensure products idx exists before search
+        ingest_customers_from_airtable,  # load customers data from Airtable
+        ingest_products_from_airtable,   # load products data from Airtable
+        search_customers,                # search tool for customer lookup
+        search_products,                 # search tool for product lookup
     ],
     response_format=RetrievedPO,
 )
