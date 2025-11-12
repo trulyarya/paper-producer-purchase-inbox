@@ -1,0 +1,16 @@
+# Example file for terraform.tfvars (as placeholder):
+# Usually, you would copy this file to terraform.tfvars and
+# fill in your own values there, then run Terraform commands.
+# Usually `terraform.tfvars` is ignored by git to avoid committing sensitive info.
+
+# ============================================================================
+# TERRAFORM VARIABLES FILE - Values for your deployment
+# ============================================================================
+# This file contains the actual values you'll use when deploying
+# Fill in your details below
+
+# GCP Project ID (projects can be accessed in the GCP Console on the web)
+project_id   = "..."
+
+# Your project identifier (3-10 characters, lowercase letters/numbers)
+project_name = "..."

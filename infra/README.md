@@ -230,11 +230,10 @@ After deployment:
 
 1. Save output values (endpoints, resource names)
 2. Retrieve API keys for Azure AI Foundry and Search
-3. Set up Airtable base with tables for products, customers, inventory, orders, and invoices
-4. Create Airtable API key and configure access
-5. Build FastAPI application with agent implementations
-6. Configure Gmail and Slack integrations
-7. Deploy container app to Azure Container Apps
+3. Create Airtable base with empty `Products` and `Customers` tables
+4. Upload sample data: `python scripts/upload_sample_data.py`
+5. Configure Gmail and Slack integrations
+6. Deploy container app to Azure Container Apps
 
 ## Learn More
 
