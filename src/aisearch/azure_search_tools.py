@@ -22,7 +22,7 @@ from dotenv import load_dotenv
 from crm.airtable_tools import get_all_products, get_all_customers
 
 # Agent framework decorator, for AI function registration
-from agent_framework import ai_function
+from agent_framework import AgentExecutorResponse, WorkflowContext, ai_function, executor
 
 # Azure SDK imports
 from azure.identity import DefaultAzureCredential  # Managed identity auth
@@ -91,7 +91,6 @@ VECTOR_ALGO_NAME = "hnsw-algo"  # Algorithm identifier
 # ============================================================================
 # VECTOR SEARCH CONFIGURATION: HNSW + Azure OpenAI EMBEDDINGS
 # ============================================================================
-
 
 # Python decorator that tells the function below it to "remember" (to cache)
 # its result the first time it's called. maxsize=1 means it only keeps the most
@@ -360,8 +359,8 @@ def _customer_fields() -> list[SearchField]:
 # INDEX SCHEMA CREATION
 # ============================================================================
 
-
-def create_products_index_schema() -> None:
+@ai_function
+def create_products_index_schema() -> dict[str, Any]:
     """
     Creates or updates the products search index schema.
     Azure AI Search will update existing index if already present.
@@ -378,10 +377,19 @@ def create_products_index_schema() -> None:
         ),
     )
     INDEX_CLIENT.create_or_update_index(index)  # Upsert index
-    print(f"✓ Index '{INDEX_NAME_PRODUCTS}' created/updated successfully")
+
+    logger.info(
+        "[FUNCTION create_products_index_schema] ✓ Products index '{}' created/updated successfully in Azure AI Search",
+        INDEX_NAME_PRODUCTS)
+
+    return {"status": "created_or_updated",
+            "index": INDEX_NAME_PRODUCTS,
+            "index_fields_count": len(_product_fields())}
 
 
-def create_customer_index_schema() -> None:
+
+@ai_function
+def create_customer_index_schema() -> dict[str, Any]:
     """
     Creates or updates the customers search index schema.
     Azure AI Search will update existing index if already present.
@@ -398,8 +406,14 @@ def create_customer_index_schema() -> None:
         ),
     )
     INDEX_CLIENT.create_or_update_index(index)  # Upsert index
-    print(f"✓ Index '{INDEX_NAME_CUSTOMERS}' created/updated successfully")
+    
+    logger.info(
+        "[FUNCTION create_customer_index_schema] ✓ Customer index '{}' created/updated successfully in Azure AI Search",
+        INDEX_NAME_CUSTOMERS)
 
+    return {"status": "created_or_updated",
+            "index": INDEX_NAME_CUSTOMERS,
+            "index_fields_count": len(_customer_fields())}
 
 # ============================================================================
 # DOCUMENT INGESTION
@@ -424,8 +438,8 @@ def _upload_documents_to_index(
         credential=CREDENTIAL,  # Managed identity
     )
 
-    result = search_client.upload_documents(documents=documents)  # Batch upload
-    logger.debug("✓ Uploaded {} documents to '{}'", len(result), index_name)
+    search_client.upload_documents(documents=documents)  # Batch upload
+
 
 @ai_function
 def ingest_products_from_airtable() -> dict[str, Any]:
@@ -444,6 +458,15 @@ def ingest_products_from_airtable() -> dict[str, Any]:
         # default to an empty dictionary.
         attrs = json.loads(fields.get("Attributes JSON", "{}"))
 
+        # Handle finish synonyms for better search matching e.g. coated matte = matt matte        
+        finish = attrs.get('finish', '') or ''
+        finish_synonyms = {
+            "coated matte": "matt matte",
+            "copy": "kopierpapier",
+            "uncoated": "ungestrichen uncoated",
+        }
+        extra_keywords = finish_synonyms.get(finish.lower(), "")
+        
         # Construct searchable content field for vector search in markdown format:
         # This field is used for vector embeddings and full-text search
         searchable_content = (
@@ -452,8 +475,9 @@ def ingest_products_from_airtable() -> dict[str, Any]:
             f"**Description:** {fields.get('Description', '')}\n"
             f"**Size:** {attrs.get('size', '')}\n"
             f"**Weight:** {attrs.get('gsm', '')} gsm\n"
-            f"**Finish:** {attrs.get('finish', '')}\n"
+            f"**Finish:** {finish}\n"
             f"**Color:** {attrs.get('color', '')}\n"
+            f"**Keywords:** {extra_keywords}\n"
         )
 
         # Construct document dictionary for AI Search
@@ -475,7 +499,18 @@ def ingest_products_from_airtable() -> dict[str, Any]:
         documents.append(doc)
 
     _upload_documents_to_index(INDEX_NAME_PRODUCTS, documents)  # Batch upload
-    return {"status": "ingested", "index": INDEX_NAME_PRODUCTS, "count": len(documents)}
+
+    logger.info(
+        "[FUNCTION ingest_products_from_airtable] ✓ Ingested {} documents from "
+        "Airtable into products index '{}' to Azure AI Search",
+        len(documents),
+        INDEX_NAME_PRODUCTS
+    )
+
+    return {"status": "ingested",
+            "index": INDEX_NAME_PRODUCTS,
+            "ingested_docs_count": len(documents)}
+
 
 @ai_function
 def ingest_customers_from_airtable() -> dict[str, Any]:
@@ -516,7 +551,17 @@ def ingest_customers_from_airtable() -> dict[str, Any]:
         documents.append(doc)
 
     _upload_documents_to_index(INDEX_NAME_CUSTOMERS, documents)  # Batch upload
-    return {"status": "ingested", "index": INDEX_NAME_CUSTOMERS, "count": len(documents)}
+
+    logger.info(
+        "[FUNCTION ingest_customers_from_airtable] ✓ Ingested {} documents from "
+        "Airtable into customers index '{}' to Azure AI Search",
+        len(documents),
+        INDEX_NAME_CUSTOMERS
+    )
+
+    return {"status": "ingested",
+            "ingested_docs_count": INDEX_NAME_CUSTOMERS,
+            "count": len(documents)}
 
 
 # ============================================================================
@@ -524,7 +569,7 @@ def ingest_customers_from_airtable() -> dict[str, Any]:
 # ============================================================================
 
 
-def semantic_and_hybrid_search(
+def _semantic_and_hybrid_search(
     index_name: str,
     query_text: str,
     top: int = 3,
@@ -598,7 +643,13 @@ def _search_customers(
     Returns:
         list[dict[str, Any]]: A list of CUSTOMER search result documents.
     """
-    return semantic_and_hybrid_search(
+    logger.info(
+            "[FUNCTION search_customers] Performing hybrid and semantic "
+            "search on customers index '{}' in Azure AI Search...",
+            INDEX_NAME_CUSTOMERS
+    )
+
+    return _semantic_and_hybrid_search(
         INDEX_NAME_CUSTOMERS,
         query,
         top=top,
@@ -615,6 +666,7 @@ def _search_customers(
         ],
         semantic_config="customers-semantic-config",
     )
+    
 
 def _search_products(
     query: str,
@@ -631,7 +683,14 @@ def _search_products(
     Returns:
         list[dict[str, Any]]: A list of PRODUCT search result documents.
     """
-    return semantic_and_hybrid_search(
+
+    logger.info(
+        "[FUNCTION search_products] Performing hybrid and semantic "
+        "search on products index '{}' in Azure AI Search...",
+        INDEX_NAME_PRODUCTS,
+    )
+
+    return _semantic_and_hybrid_search(
         INDEX_NAME_PRODUCTS,
         query,
         top=top,
@@ -653,9 +712,37 @@ def _search_products(
         semantic_config="products-semantic-config",
     )
 
-# Register search functions as AI functions for agent use
+
+# IMPORTANT: Register search functions as AI functions for agent use!
+# We couldn't decorate the internal functions directly because
+# they have parameters that was giving issues with type checking.
+# So we wrap them in these ai_function-decorated functions.
 search_customers = ai_function(_search_customers)
 search_products = ai_function(_search_products)
+
+
+# Executor func to delete both indexes from Azure AI Search at the end of workflow
+@executor
+@logger.catch
+def destroy_indexes(
+    upstream_agent_response: AgentExecutorResponse,
+    ctx: WorkflowContext[AgentExecutorResponse],
+) -> AgentExecutorResponse:
+    """Deletes both products and customers indexes from Azure AI Search."""
+    _ = upstream_agent_response.agent_run_response.value  # Unused parameter
+    
+    INDEX_CLIENT.delete_index(INDEX_NAME_PRODUCTS)
+    INDEX_CLIENT.delete_index(INDEX_NAME_CUSTOMERS)
+    
+    logger.info(
+        "[FUNCTION destroy_indexes] ✓ Deleted the indexes '{}' and '{}' "
+        "from Azure AI Search!",
+        INDEX_NAME_PRODUCTS,
+        INDEX_NAME_CUSTOMERS
+    )
+
+    __ = ctx  # Unused parameter
+    return upstream_agent_response
 
 
 # ============================================================================
@@ -688,7 +775,7 @@ if __name__ == "__main__":
     print("\n" + "=" * 40 + "\n COMPLETED" + "\n" + "=" * 40 + "\n")
 
 
-    # ########## Delete Indexes from Azure AI Search ############
+    ########## Delete Indexes from Azure AI Search ############
     # result = INDEX_CLIENT.delete_index(INDEX_NAME_PRODUCTS)
     # print(result)
     # result = INDEX_CLIENT.delete_index(INDEX_NAME_CUSTOMERS)
