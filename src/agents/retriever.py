@@ -4,7 +4,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from agent_framework import ChatAgent
 
 from agents.base import chat_client
-from agents.tool_capture import search_evidence
+from agents.middleware_tools import search_evidence
 from aisearch.azure_search_tools import (
     create_products_index_schema,
     create_customer_index_schema,
