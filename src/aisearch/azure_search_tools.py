@@ -447,6 +447,9 @@ def ingest_products_from_airtable() -> dict[str, Any]:
     Fetches product data from Airtable and uploads to products index.
     Transforms Airtable records into Azure AI Search document format.
     """
+    # Ensure the index exists before attempting uploads (idempotent upsert).
+    # create_products_index_schema()
+
     records = get_all_products()  # Get all products from Airtable via airtable_tools
     documents = []  # Document accumulator
 
@@ -518,6 +521,9 @@ def ingest_customers_from_airtable() -> dict[str, Any]:
     Fetches customer data from Airtable and uploads to customers index.
     Derives segment from credit limit, and addresses.
     """
+    # Ensure the index exists before attempting uploads (idempotent upsert).
+    # create_customer_index_schema()
+
     records = get_all_customers()  # Get all customers via airtable_tools
     documents = []  # Document accumulator
 
