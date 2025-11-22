@@ -1,0 +1,74 @@
+# Version control
+.git
+.git.nosync.noindex
+.gitignore
+.github
+.github.nosync.noindex
+
+# Python artifacts
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info
+dist
+build
+*.egg
+
+# Virtual environments
+.venv
+.venv.nosync.noindex
+venv
+env
+ENV
+
+# Environment and secrets
+.env
+.env.example
+cred/*
+# cred/token.json  # TODO: In production, use service account or K8s secret instead of bundling token
+
+# IDE and OS files
+.vscode
+.DS_Store
+*.swp
+*.swo
+*~
+
+# Documentation and notes
+docs
+*.md
+ARCHITECTURE_DEPLOYMENT.md
+AGENTS_WORKFLOW.md
+PRD.md
+README.md
+WIREFRAME.md
+
+# Infrastructure (not needed in container)
+infra
+terraform.tfstate
+terraform.tfstate.*
+*.tfvars
+.terraform
+.terraform.lock.hcl
+
+# Logs (runtime generates fresh logs)
+logs
+*.log
+
+# Development and testing
+scratch
+tests
+.pytest_cache
+.coverage
+htmlcov
+
+# Deployment scripts (not needed at runtime)
+deploy.sh
+cleanup.sh
+
+# Data (not needed in production container)
+data/processed
+data/raw
+data/sample
