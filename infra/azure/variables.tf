@@ -49,7 +49,7 @@ variable "admin_email" {
 
 
 # -----------------------------------------------------------------------------
-# OPTIONAL PARAMETERS - You CAN provide these values
+# OPTIONAL PARAMETERS - You CAN provide these values in terraform.tfvars
 # -----------------------------------------------------------------------------
 
 variable "developer_object_id" {
@@ -59,4 +59,22 @@ Get via: az ad signed-in-user show --query id -o tsv
 DESC
   type        = string
   default     = ""
+}
+
+variable "github_owner" {
+  description = <<-DESC
+GitHub repository owner (username or organization).
+Leave empty to auto-detect from GITHUB_REPOSITORY environment variable.
+DESC
+  type        = string
+  default     = null
+}
+
+variable "github_repo" {
+  description = <<-DESC
+GitHub repository name (without owner prefix).
+Leave empty to auto-detect from GITHUB_REPOSITORY environment variable.
+DESC
+  type        = string
+  default     = null
 }

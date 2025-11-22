@@ -9,11 +9,12 @@ This directory contains Terraform configuration to deploy all Azure resources ne
 - **Application Insights** - For application telemetry
 - **Storage Account** - For invoice PDF storage
   - Blob container: `invoices`
+- **Azure Container Registry** - Stores the workflow Docker image (always `paperco-app:latest` for this MVP)
 - **Azure AI Services Account** - OpenAI endpoint with:
   - GPT-4 deployment (`gpt-4.1`)
   - Text Embedding deployment (`text-embedding-3-large`)
-- **Azure AI Search** - For semantic SKU/customer search
-- **Container Apps Environment** - For hosting the Python application
+- **Azure AI Search** (Basic SKU) - Enables semantic + vector search
+- **Container Apps Environment + Container App** - Runs the Gmail polling worker (no public ingress)
 
 ## Prerequisites
 
@@ -99,6 +100,11 @@ Important outputs:
 - `openai_endpoint` - Use for `AZURE_OPENAI_ENDPOINT` in `.env`
 - `search_service_endpoint` - Use for `AZURE_SEARCH_ENDPOINT` in `.env`
 - `app_insights_connection_string` - Use for `APPLICATIONINSIGHTS_CONNECTION_STRING` in `.env`
+- `container_registry_login_server` - Needed when tagging/pushing Docker images
+- `container_image_reference` - Image URI the Container App expects
+- `container_app_name` - Target when updating secrets or restarting the app
+- `storage_account_name` - Sometimes handy for CLI commands
+- `storage_account_url` - Copy directly into `AZURE_STORAGE_ACCOUNT_URL` when running locally
 
 ### Get Sensitive Output
 
@@ -106,9 +112,11 @@ Important outputs:
 terraform output -raw app_insights_connection_string
 ```
 
-## Retrieve API Keys
+## Retrieve API Keys (only for local testing)
 
-After deployment, get the keys needed for your `.env` file:
+The deployed Container App uses managed identity and does **not** need API keys.
+If you want to run the workflow from your laptop (where managed identity isn't
+available), fetch the keys below and place them in your local `.env`:
 
 ```bash
 # Azure OpenAI API Key
@@ -132,7 +140,7 @@ az storage account show-connection-string \
 
 ## Update .env File
 
-After deployment, update your `.env` file with the outputs:
+For local runs, update your `.env` file with these values (the Container App already receives them via environment variables + managed identity, so this is purely for developer machines):
 
 ```bash
 # Azure OpenAI / AI Services
@@ -144,11 +152,43 @@ AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME="text-embedding-3-large"
 AZURE_SEARCH_ENDPOINT="<from terraform output search_service_endpoint>"
 
 # Azure Storage
-AZURE_STORAGE_CONNECTION_STRING="<from az storage command above>"
+AZURE_STORAGE_ACCOUNT_URL="<from terraform output storage_account_url>"
+# Optional fallback if you cannot use managed identity locally:
+# AZURE_STORAGE_CONNECTION_STRING="<from az storage command above>"
 
 # Application Insights
 APPLICATIONINSIGHTS_CONNECTION_STRING="<from terraform output app_insights_connection_string>"
 ```
+
+## Build & Push the Docker Image
+
+Terraform wires Azure Container Apps to a single image path (`paperco-app:latest`). After Terraform finishes:
+
+1. Make sure Gmail OAuth files exist locally: run the GCP steps to fetch `cred/credentials.json`, then run `python main.py` once to generate `cred/token.json`. Keeping these files in place lets the container poll Gmail without a browser pop-up.
+2. Build and push the exact image Terraform expects:
+
+   ```bash
+   export RESOURCE_GROUP=$(terraform output -raw resource_group_name)
+   export ACR_NAME=$(terraform output -raw container_registry_name)
+   export IMAGE_URI=$(terraform output -raw container_image_reference)
+
+   az acr login --name "$ACR_NAME"
+   pushd ../.. >/dev/null
+   docker build -t "$IMAGE_URI" .
+   docker push "$IMAGE_URI"
+   popd >/dev/null
+   ```
+
+## Managed Identity Permissions (already configured)
+
+Terraform assigns the container's managed identity to the correct roles:
+
+- **Cognitive Services OpenAI User** on the Azure OpenAI account
+- **Search Index Data Contributor** on the Azure AI Search service
+- **Storage Blob Data Contributor** on the Storage account
+
+That means the deployed app authenticates with Azure AD tokens—no secrets required.
+Only create secrets if you want to override this behavior for local debugging.
 
 ## Cleanup
 
