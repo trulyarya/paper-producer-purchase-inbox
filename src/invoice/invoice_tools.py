@@ -141,18 +141,24 @@ def generate_invoice_pdf_url(
 
     logger.info("[FUNCTION generate_invoice_pdf_url] Uploading invoice PDF file to Azure Blob Storage...")
 
-    storage_account_url = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
-    if storage_account_url is None:
-        raise ValueError(
-            "AZURE_STORAGE_CONNECTION_STRING environment variable is not set."
-        )
-
+    account_url = os.getenv("AZURE_STORAGE_ACCOUNT_URL")
+    connection_string = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
     container_name = os.getenv("AZURE_INVOICE_CONTAINER", "invoices")
 
-    blob_service = BlobServiceClient(
-        account_url=storage_account_url,
-        credential=DefaultAzureCredential(),
-    )
+    if account_url:
+        # Managed identity path (Container Apps / other Azure hosts)
+        blob_service = BlobServiceClient(
+            account_url=account_url,
+            credential=DefaultAzureCredential(),
+        )
+    elif connection_string:
+        # Local development fallback when you only have a connection string
+        blob_service = BlobServiceClient.from_connection_string(connection_string)
+    else:
+        raise ValueError(
+            "Set AZURE_STORAGE_ACCOUNT_URL for managed identity, "
+            "or AZURE_STORAGE_CONNECTION_STRING for local development."
+        )
 
     blob_name = f"{template_path.stem}-{int(time.time())}.pdf"
     container_client = blob_service.get_container_client(container_name)
