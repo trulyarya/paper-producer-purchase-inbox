@@ -7,8 +7,6 @@ cred/*
 __pycache__/
 .DS_Store
 *.pyc
-.github.nosync.noindex
-.github/
 .vscode
 scratch
 src/agents/prompts
@@ -19,7 +17,7 @@ logs/*
 
 # Terraform files to ignore (under ./infra/):
 # *.tfvars   # normally used to store sensitive variables, uncomment if needed
-# *.tfstate  # generated state files, uncomment if needed
+*.tfstate  # generated state files, uncomment if needed
 *.tfstate.*
 .terraform/
 .terraform.lock.hcl
