@@ -1,8 +1,8 @@
-loguru # For logging
 requests # For making HTTP requests to APIs
+pydantic # For data validation
 python-dotenv # For environment variable management
 beautifulsoup4 # For HTML parsing
-pydantic # For data validation
+loguru # For logging
 slack-sdk # For Slack integration
 jinja2 # For rendering HTML templates
 weasyprint # HTML-to-PDF conversion
@@ -14,9 +14,9 @@ google-api-python-client
 
 # Azure SDK libraries
 azure-identity
-azure-ai-agents
-azure-ai-projects
 agent-framework
 azure-storage-blob
 azure-search-documents
 azure-ai-contentsafety
+azure-ai-evaluation
+azure-monitor-opentelemetry-exporter
