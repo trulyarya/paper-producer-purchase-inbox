@@ -22,15 +22,13 @@ Limitations (by Google, not Terraform):
 From the repo root:
 
 ```bash
-cd infra/gcp-gmail-quickstart
-# 0) Accept the Cloud Terms of Service once via the Console:
-#    https://console.cloud.google.com/terms/cloud
-terraform init
-terraform apply -auto-approve
+terraform -chdir=infra/gcp init
+terraform -chdir=infra/gcp apply -auto-approve
 ```
 
 Notes:
 
+- Accept the Cloud Terms of Service once via the Console: https://console.cloud.google.com/terms/cloud
 - If you don’t pass a project ID, Terraform auto-generates one like `gmail-<random>`.
 - Outputs will include direct links to the Console pages you need next.
 
@@ -38,7 +36,7 @@ Notes:
 
 Google moved OAuth creation into the “Google Auth Platform” wizard (cannot be automated; no API or Terraform resource exists). Follow these exact manual steps:
 
-1. Open the `oauth_credentials_url` output (or `https://console.cloud.google.com/apis/credentials/oauthclient?project=<YOUR_PROJECT_ID>`).  
+1. Open the `oauth_consent_screen_url` output (or `https://console.cloud.google.com/apis/credentials/consent?project=<YOUR_PROJECT_ID>`).  
 2. You’ll see “Google Auth Platform noch nicht konfiguriert / Get started”. Click **Erste Schritte / Get started**.  
 3. Consent screen wizard:  
    - User type: **External**, then **Create**.  
