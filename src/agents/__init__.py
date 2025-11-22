@@ -5,7 +5,7 @@ from agents.retriever import retriever
 from agents.decider import decider
 from agents.fulfiller import fulfiller
 from agents.rejector import rejector
-from agents.tool_capture import (
+from agents.middleware_tools import (
     ToolCaptureMiddleware,
     # This function attaches the middleware to agents like this: attach_middlewares(agent1, agent2, ...)
     attach_middlewares,
