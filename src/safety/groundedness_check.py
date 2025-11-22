@@ -30,7 +30,7 @@ async def check_agent_groundedness(
     
     Routing condition reads metadata to decide whether to continue to decider.
     """
-    from agents.tool_capture import search_queries
+    from agents.middleware_tools import search_queries
     
     retrieved_po = retriever_response.agent_run_response.value
     po_number = getattr(retrieved_po, 'po_number', 'UNKNOWN')
@@ -48,8 +48,12 @@ async def check_agent_groundedness(
     retrieval_evidence = getattr(retrieved_po, 'retrieval_evidence', [])
     
     # Format response as OpenAI message (SDK expects this format)
-    # agent_response = [{"role": "assistant", "content": json.dumps(retrieved_po.model_dump())}]
-    agent_response = json.dumps(retrieved_po.model_dump())
+    agent_response = [
+        {
+            "role": "assistant",
+            "content": json.dumps(retrieved_po.model_dump()),
+        }
+    ]
     
     # Build query from captured search queries
     query_text = " | ".join(search_queries) if search_queries else f"PO {po_number} retrieval"
@@ -111,4 +115,3 @@ def _attach_failure_metadata(response: AgentExecutorResponse, reason: str) -> No
         "groundedness_score": 0,
         "groundedness_reason": reason,
     })
-
