@@ -1,3 +1,5 @@
+import asyncio
+import os
 from math import e
 import sys
 from pathlib import Path
@@ -25,7 +27,7 @@ from agents import (
     rejector,
 )
 
-from agents.tool_capture import clear_evidence
+from agents.middleware_tools import clear_evidence
 from safety.groundedness_check import check_agent_groundedness
 from aisearch.azure_search_tools import destroy_indexes # executor to delete indexes after use
 from emailing.gmail_tools import (
@@ -149,6 +151,8 @@ def create_workflow():
 # It's a global workflow instance template; fresh instances are created per run.
 workflow = create_workflow()
 
+POLL_INTERVAL_SECONDS = int(os.getenv("GMAIL_POLL_INTERVAL_SECONDS", "60"))
+
 
 @logger.catch
 async def run_till_mail_read():  # async cuz we'll need to await workflow.run()
@@ -158,9 +162,13 @@ async def run_till_mail_read():  # async cuz we'll need to await workflow.run()
     while True:
         unread_messages = fetch_unread_emails()
         if not unread_messages:
-            logger.info("Email processing complete | total_processed={}",
-                        processed)
-            break
+            logger.info(
+                "No unread emails detected | total_processed={} | sleeping {}s",
+                processed,
+                POLL_INTERVAL_SECONDS,
+            )
+            await asyncio.sleep(POLL_INTERVAL_SECONDS)
+            continue
 
         current = unread_messages[0]
         subject_preview = current.get("subject", "").strip()
