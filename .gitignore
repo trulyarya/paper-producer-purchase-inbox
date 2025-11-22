@@ -1,4 +1,4 @@
-cred
+cred/*
 .env
 .git.nosync.noindex
 .git
@@ -18,8 +18,8 @@ logs/*
 
 
 # Terraform files to ignore (under ./infra/):
-# *.tfvars  # normally used to store sensitive variables, uncomment if needed
-*.tfstate
+# *.tfvars   # normally used to store sensitive variables, uncomment if needed
+# *.tfstate  # generated state files, uncomment if needed
 *.tfstate.*
 .terraform/
 .terraform.lock.hcl
