@@ -78,7 +78,7 @@ TERRAFORM_OUTPUT_KEYS = {
 # Roles to assign to the Container App managed identity:
 ROLE_ASSIGNMENTS = [
     # Azure OpenAI chat/embeddings (data-plane):
-    ("Cognitive Services OpenAI User", "AZURE_AI_RESOURCE_ID", "Azure AI chat/embeddings"),
+    ("Cognitive Services OpenAI Contributor", "AZURE_AI_RESOURCE_ID", "Azure AI chat/embeddings"),
     # Azure Content Safety data-plane (text:analyze, text:shieldPrompt):
     ("Cognitive Services User", "AZURE_AI_RESOURCE_ID", "Azure AI Content Safety"),
     # Azure AI Search data-plane (read/query and index + upload data for indexing):
@@ -156,7 +156,7 @@ def check_prerequisites() -> tuple[str, str, str]:
         )
         sys.exit(1)
 
-    # --- 3b. Ensure the GA Container Apps CLI extension is present (needed for --registry-identity) ---
+    # --- 3b. Ensure the Container Apps CLI extension is present (needed for --registry-identity) ---
     try:
         logger.info("Ensuring Azure CLI containerapp extension is installed/up-to-date...")
         subprocess.run(
