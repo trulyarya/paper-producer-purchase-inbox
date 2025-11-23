@@ -1,23 +1,21 @@
 import asyncio
 import os
-from math import e
 import sys
 from pathlib import Path
-from typing import Any
 
 # Ensure the repository's src/ directory is importable when running as a script
 # resolve() gets absolute path; parents[1] goes up two levels
 PROJECT_SRC = Path(__file__).resolve().parents[1]  # this gets us to the src/ directory
 sys.path.insert(0, str(PROJECT_SRC))  # add src to sys.path, index '0' means start of list
 
-from agent_framework import (
+from agent_framework import (  # noqa: E402
     WorkflowBuilder,  # Builder class for constructing workflows (includes .add(), etc. methods)
     WorkflowContext,  # Controlled interface for executors to interact w workflow ecosystem
     AgentExecutorResponse,  # Response object returned by agent executors
     executor,  # Decorator converts standalone functions to FunctionExecutor instances
 )
 
-from agents import (
+from agents import (  # noqa: E402
     classifier,
     parser,
     retriever,
@@ -27,16 +25,16 @@ from agents import (
     rejector,
 )
 
-from agents.middleware_tools import clear_evidence
-from safety.groundedness_check import check_agent_groundedness
-from aisearch.azure_search_tools import destroy_indexes # executor to delete indexes after use
-from emailing.gmail_tools import (
+from agents.middleware_tools import clear_evidence  # noqa: E402
+from safety.groundedness_check import check_agent_groundedness  # noqa: E402
+from aisearch.azure_search_tools import destroy_indexes # executor to delete indexes after use  # noqa: E402
+from emailing.gmail_tools import (  # noqa: E402
     # below is NOT the AI function (get_unread_emails is, which is used by the agent)!
     fetch_unread_emails,
     mark_email_as_read
 )
 
-from loguru import logger
+from loguru import logger  # noqa: E402
 
 
 @logger.catch  # Decorator to catch & log exceptions in the function if any occur
