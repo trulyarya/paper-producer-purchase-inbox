@@ -19,6 +19,8 @@ logs/*
 # *.tfvars   # normally used to store sensitive variables, uncomment if needed
 *.tfstate  # generated state files, uncomment if needed
 *.tfstate.*
+infra/gcp/terraform.tfstate
+infra/azure/terraform.tfstate
 .terraform/
 .terraform.lock.hcl
 crash.log
