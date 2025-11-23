@@ -1,6 +1,4 @@
-import os
 import shutil
-
 from dotenv import load_dotenv
 
 from agent_framework.azure import AzureOpenAIChatClient
