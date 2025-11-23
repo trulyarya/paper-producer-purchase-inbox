@@ -121,7 +121,7 @@ def _update_record(
 
     try:
         response.raise_for_status()  # Raise on 4xx/5xx errors
-    except requests.exceptions.HTTPError as e:
+    except requests.exceptions.HTTPError:
         logger.error(
             "[FUNCTION _update_record] Airtable API error """ \
             "| table={} | record_id={} | fields={} | status={} | response={}",
