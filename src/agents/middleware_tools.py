@@ -5,7 +5,6 @@ without forcing each agent to wire up custom middleware.
 """
 
 import json
-from math import e
 from typing import Any
 from collections.abc import Awaitable, Callable
 from loguru import logger
