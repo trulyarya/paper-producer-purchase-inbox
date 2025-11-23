@@ -47,7 +47,7 @@ def _format_order_summary(retrieved_po: dict[str, Any]) -> str:
             logger.error("[SLACK] ERROR: Item has wrong schema! Keys: {}", list(item_data.keys()))
             logger.error("[SLACK] Expected: ordered_qty, product_name, unit_price, subtotal")
             logger.error("[SLACK] Got: qty={}, name={}, price={}, subtotal={}", qty, name, price, subtotal)
-            item_lines.append(f"- ERROR: Item schema mismatch")
+            item_lines.append("- ERROR: Item schema mismatch")
 
     if not item_lines:
         item_lines.append("- No line items provided")
