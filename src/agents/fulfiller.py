@@ -80,7 +80,7 @@ def send_confirmation_email_with_approval(
                 "reason": f"Approved but email failed: {str(e)}",
             }
     else:
-        print(f"[APPROVAL] ✗ Denied! No confirmation email sent.")
+        print("[APPROVAL] ✗ Denied! No confirmation email sent.")
         return {
             "status": "denied",
             "email_sent": "false",
