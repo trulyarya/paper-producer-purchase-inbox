@@ -1,7 +1,8 @@
 
 variable "project_id" {
-  description = "GCP project ID."
+  description = "Base GCP project ID prefix (a random suffix will be added after)."
   type        = string
+  default     = "paperco-gmail-demo"
 }
 
 variable "project_name" {
