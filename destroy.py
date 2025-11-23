@@ -1,12 +1,4 @@
-"""
-Tear down all infrastructure (Azure + GCP) in a single go.
-
-The script mirrors the old cleanup.sh flow but keeps things readable and safe:
-1) Asks for a clear "destroy" confirmation.
-2) Auto-fetches the Azure subscription ID and admin email (so Terraform will not prompt).
-3) Runs `terraform destroy -auto-approve` for Azure and GCP if state files exist.
-"""
-
+"""Tear down Azure + GCP infra in one go, as simply as possible."""
 import subprocess
 from pathlib import Path
 import sys
@@ -18,25 +10,32 @@ AZURE_INFRA_DIR = REPO_ROOT / "infra" / "azure"
 GCP_INFRA_DIR = REPO_ROOT / "infra" / "gcp"
 
 
-def run_command(
-        command: list[str],
-        working_dir: Path | None = None) -> None:
-    """Execute shell command with logging; re-raises on failure.
-    Args:
-        command: List of command parts (executable + args).
-        working_dir: Optional working directory to run the command in.
-    """
+def run_command(command: list[str], working_dir: Path | None = None) -> None:
+    """Run a shell command with logging."""
     logger.info("$ " + " ".join(command))
     subprocess.run(command, cwd=working_dir, check=True)
 
 
+def read_tfvar_value(tfvars_path: Path, key: str) -> str:
+    """Tiny helper to pull key=value from terraform.tfvars without extra deps."""
+    if not tfvars_path.exists():
+        return ""
+    for raw in tfvars_path.read_text().splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if not line or "=" not in line:
+            continue
+        lhs, rhs = line.split("=", 1)
+        if lhs.strip() == key:
+            return rhs.strip().strip('"')
+    return ""
+
+
 def main() -> None:
-    """Main cleanup flow kept simple and beginner-friendly."""
+    """Main cleanup flow."""
     logger.info("-" * 60)
     logger.info("PaperCo O2C - DESTROY ALL RESOURCES")
     logger.info("-" * 60)
-    logger.warning(
-        "This will delete Azure and GCP infrastructure created by Terraform!\n")
+    logger.warning("This will delete Azure and GCP infrastructure created by Terraform!\n")
 
     confirmation = input("Type 'destroy' to confirm: ").strip().lower()
     if confirmation != "destroy":
@@ -45,13 +44,9 @@ def main() -> None:
 
     logger.info("Confirmation received. Starting cleanup...\n")
 
-    # Quick tooling checks before we kick off.
-    for cli, hint in [(
-        "terraform", "Install: https://developer.hashicorp.com/terraform/install"
-    )]:
-        if subprocess.run(["which", cli], capture_output=True).returncode != 0:
-            logger.error(f"{cli} not found in PATH. {hint}")
-            sys.exit(1)
+    if subprocess.run(["which", "terraform"], capture_output=True).returncode != 0:
+        logger.error("terraform not found in PATH.")
+        sys.exit(1)
     
 
     # -----------------------------------
@@ -61,57 +56,36 @@ def main() -> None:
     
     azure_state = AZURE_INFRA_DIR / "terraform.tfstate"
     if azure_state.exists():
-        if subprocess.run(["which", "az"], capture_output=True).returncode != 0:
-            logger.error("Azure CLI not found. Install: "
-                         "https://learn.microsoft.com/cli/azure/install-azure-cli")
-            sys.exit(1)
+        subscription_id = subprocess.run(
+            ["az", "account", "show", "--query", "id", "-o", "tsv"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        admin_email = subprocess.run(
+            ["az", "account", "show", "--query", "user.name", "-o", "tsv"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
 
-        try:
-            subscription_id = subprocess.run(
-                ["az", "account", "show", "--query", "id", "-o", "tsv"],
-                capture_output=True,
-                text=True,
-                check=True,
-            ).stdout.strip()
-            
-            admin_email = subprocess.run(
-                ["az", "account", "show", "--query", "user.name", "-o", "tsv"],
-                capture_output=True,
-                text=True,
-                check=True,
-            ).stdout.strip()
-            
-            logger.success("Azure context OK "
-                           f"(subscription={subscription_id}, admin={admin_email})")
-        
-        except subprocess.CalledProcessError:
-            logger.error("Azure CLI not logged in. Run 'az login' "
-                         "and pick the right subscription.")
-            sys.exit(1)
+        run_command(["terraform", "init", "-upgrade"], working_dir=AZURE_INFRA_DIR)
+        run_command(
+            [
+                "terraform",
+                "destroy",
+                "-auto-approve",
+                "-var",
+                f"subscription_id={subscription_id}",
+                "-var",
+                f"admin_email={admin_email}",
+            ],
+            working_dir=AZURE_INFRA_DIR,
+        )
 
-        destroy_cmd = [
-            "terraform", "destroy", "-auto-approve",
-            "-var", f"subscription_id={subscription_id}",
-            "-var", f"admin_email={admin_email}",
-        ]
-
-        try:
-            run_command(
-                ["terraform", "init", "-upgrade"],
-                working_dir=AZURE_INFRA_DIR)
-            
-            run_command(
-                destroy_cmd,
-                working_dir=AZURE_INFRA_DIR)
-            
-            logger.success("Azure infrastructure destroyed!")
-        
-        except subprocess.CalledProcessError as exc:
-            logger.warning(f"Azure destroy failed (exit code {exc.returncode}). "
-                           "Check logs and continue.")
-    
+        logger.success("Azure infrastructure destroyed!")
     else:
-        logger.warning("Skipping Azure: no terraform.tfstate found!")
+        logger.info("Skipping Azure: no terraform.tfstate found.")
 
     logger.info("")
 
@@ -121,33 +95,25 @@ def main() -> None:
     # -----------------------------------
     logger.info("=== [2/2] Destroying GCP project... ===")
     
+    project_id = read_tfvar_value(GCP_INFRA_DIR / "terraform.tfvars", "project_id")
     gcp_state = GCP_INFRA_DIR / "terraform.tfstate"
     
     if gcp_state.exists():
-        try:
-            run_command(
-                ["terraform", "init", "-upgrade"],
-                working_dir=GCP_INFRA_DIR)
-            
-            run_command(
-                ["terraform", "destroy", "-auto-approve"],
-                working_dir=GCP_INFRA_DIR)
-            
-            logger.success("GCP project destroyed!")
-        
-        except subprocess.CalledProcessError as exc:
-            logger.warning(f"GCP destroy failed (exit code {exc.returncode}). "
-                           "Check logs and continue.")
-
+        run_command(["terraform", "init", "-upgrade"], working_dir=GCP_INFRA_DIR)
+        run_command(["terraform", "destroy", "-auto-approve"], working_dir=GCP_INFRA_DIR)
+        logger.success("GCP resources destroyed via Terraform.")
     else:
-        logger.warning("Skipping GCP: no terraform.tfstate found!")
+        logger.info("Skipping Terraform GCP destroy: no terraform.tfstate found.")
+
+    if project_id:
+        run_command(["gcloud", "projects", "delete", project_id, "--quiet"])
+        logger.success(f"GCP project '{project_id}' deleted via gcloud.")
+    else:
+        logger.info("No project_id found in terraform.tfvars; skipping gcloud delete.")
 
     logger.success("Cleanup complete!")
     logger.info("To redeploy: run `python deploy.py`")
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        logger.warning("Cleanup interrupted by user!")
+    main()
